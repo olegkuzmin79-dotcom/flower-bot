@@ -49,7 +49,49 @@ async def init_db() -> None:
             """
         )
         await db.commit()
+        await _migrate_schema(db)
     logger.info("Database initialized at %s", DATABASE_PATH)
+
+
+async def _migrate_schema(db: aiosqlite.Connection) -> None:
+    migrations = {
+        "users": {"customer_name": "TEXT"},
+        "orders": {"customer_name": "TEXT", "customer_phone": "TEXT"},
+    }
+    for table, columns in migrations.items():
+        cursor = await db.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in await cursor.fetchall()}
+        for column, col_type in columns.items():
+            if column not in existing:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    await db.commit()
+
+
+async def get_user(user_id: int) -> dict[str, Any] | None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def update_user_profile(
+    user_id: int,
+    customer_name: str | None = None,
+    phone: str | None = None,
+) -> None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        if customer_name is not None:
+            await db.execute(
+                "UPDATE users SET customer_name = ? WHERE user_id = ?",
+                (customer_name, user_id),
+            )
+        if phone is not None:
+            await db.execute(
+                "UPDATE users SET phone = ? WHERE user_id = ?",
+                (phone, user_id),
+            )
+        await db.commit()
 
 
 async def upsert_user(user_id: int, username: str | None) -> None:
@@ -141,15 +183,19 @@ async def update_order_delivery(
     order_id: int,
     delivery_address: str,
     delivery_time: str,
+    customer_name: str | None = None,
+    customer_phone: str | None = None,
 ) -> None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
             """
             UPDATE orders
-            SET delivery_address = ?, delivery_time = ?
+            SET delivery_address = ?, delivery_time = ?,
+                customer_name = COALESCE(?, customer_name),
+                customer_phone = COALESCE(?, customer_phone)
             WHERE order_id = ?
             """,
-            (delivery_address, delivery_time, order_id),
+            (delivery_address, delivery_time, customer_name, customer_phone, order_id),
         )
         await db.commit()
 

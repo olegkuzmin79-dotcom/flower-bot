@@ -16,21 +16,33 @@ from database import (
     create_order,
     get_celebration,
     get_order,
+    get_user,
     get_user_celebrations,
     update_order_delivery,
     update_order_payment,
+    update_user_profile,
     upsert_user,
 )
 from keyboards import (
     budget_keyboard,
     main_menu_keyboard,
+    phone_keyboard,
     recipient_keyboard,
     style_keyboard,
     taboo_keyboard,
     test_pay_keyboard,
 )
 from payments import create_payment
-from utils import format_price, format_taboo_note, normalize_date
+from utils import (
+    format_phone,
+    format_price,
+    format_taboo_note,
+    normalize_phone,
+    validate_celebration_date,
+    validate_delivery_address,
+    validate_delivery_time,
+    validate_person_name,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -45,6 +57,8 @@ class AddCelebration(StatesGroup):
 
 
 class Checkout(StatesGroup):
+    customer_name = State()
+    customer_phone = State()
     delivery_address = State()
     delivery_time = State()
 
@@ -81,9 +95,12 @@ async def process_recipient(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(AddCelebration.recipient_name)
 async def process_name(message: Message, state: FSMContext) -> None:
-    name = (message.text or "").strip()
-    if len(name) < 2:
-        await message.answer("Введи имя получательницы (минимум 2 символа).")
+    name = validate_person_name(message.text or "")
+    if not name:
+        await message.answer(
+            "Введи имя получательницы буквами, без цифр.\n"
+            "Пример: Катя"
+        )
         return
     data = await state.get_data()
     full_name = f"{data['recipient_role']} {name}"
@@ -94,9 +111,12 @@ async def process_name(message: Message, state: FSMContext) -> None:
 
 @router.message(AddCelebration.celebration_date)
 async def process_date(message: Message, state: FSMContext) -> None:
-    normalized = normalize_date(message.text or "")
+    normalized = validate_celebration_date(message.text or "")
     if not normalized:
-        await message.answer("Не понял дату. Пример: 25.10 или 08-03")
+        await message.answer(
+            "Не понял дату. Пример: 25.10 или 08-03.\n"
+            "День и месяц должны быть реальными (не 31.02)."
+        )
         return
     await state.update_data(celebration_date=normalized)
     await state.set_state(AddCelebration.style_preference)
@@ -191,39 +211,135 @@ async def select_budget(callback: CallbackQuery, state: FSMContext) -> None:
 
     amount = BUDGETS[budget_key]
     order_id = await create_order(callback.from_user.id, celebration_id, amount)
-    await state.set_state(Checkout.delivery_address)
-    await state.update_data(order_id=order_id, celebration_id=celebration_id)
+    user = await get_user(callback.from_user.id)
+    suggested_name = (user or {}).get("customer_name") or callback.from_user.full_name
+    await state.update_data(
+        order_id=order_id,
+        celebration_id=celebration_id,
+        suggested_name=suggested_name,
+    )
+
     await callback.message.answer(
-        f"Отличный выбор — {BUDGET_LABELS[amount]} ({amount:,} ₽).\n"
-        "Укажи точный адрес доставки в Москве:".replace(",", " ")
+        f"Отличный выбор — {BUDGET_LABELS[amount]} ({amount:,} ₽).".replace(",", " ")
     )
     await callback.answer()
+
+    if not (user or {}).get("customer_name"):
+        await state.set_state(Checkout.customer_name)
+        hint = f"\nНапример: {suggested_name}" if suggested_name else ""
+        await callback.message.answer(
+            f"Как к тебе обращаться? Имя нужно курьеру.{hint}"
+        )
+        return
+
+    if not (user or {}).get("phone"):
+        await state.set_state(Checkout.customer_phone)
+        await callback.message.answer(
+            "Телефон для курьера — нажми кнопку или введи номер (+7...):",
+            reply_markup=phone_keyboard(),
+        )
+        return
+
+    await _prompt_delivery_address(callback.message, state)
+
+
+async def _prompt_delivery_address(message: Message, state: FSMContext) -> None:
+    await state.set_state(Checkout.delivery_address)
+    await message.answer(
+        "Укажи точный адрес доставки в Москве:\n"
+        "Пример: ул. Преображенский Вал, д. 12, кв. 45",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+@router.message(Checkout.customer_name)
+async def process_customer_name(message: Message, state: FSMContext) -> None:
+    name = validate_person_name(message.text or "")
+    if not name:
+        await message.answer("Введи имя буквами, без цифр. Пример: Олег")
+        return
+
+    await update_user_profile(message.from_user.id, customer_name=name)
+    user = await get_user(message.from_user.id)
+    if user and user.get("phone"):
+        await _prompt_delivery_address(message, state)
+        return
+
+    await state.set_state(Checkout.customer_phone)
+    await message.answer(
+        "Телефон для курьера — нажми кнопку или введи номер (+7...):",
+        reply_markup=phone_keyboard(),
+    )
+
+
+@router.message(Checkout.customer_phone, F.contact)
+async def process_customer_contact(message: Message, state: FSMContext) -> None:
+    if message.contact and message.contact.user_id != message.from_user.id:
+        await message.answer("Отправь свой номер, не чужой.", reply_markup=phone_keyboard())
+        return
+    phone = normalize_phone(message.contact.phone_number if message.contact else "")
+    if not phone:
+        await message.answer("Не удалось прочитать номер. Введи вручную: +7 916 123-45-67")
+        return
+    await update_user_profile(message.from_user.id, phone=phone)
+    await _prompt_delivery_address(message, state)
+
+
+@router.message(Checkout.customer_phone)
+async def process_customer_phone_text(message: Message, state: FSMContext) -> None:
+    phone = normalize_phone(message.text or "")
+    if not phone:
+        await message.answer(
+            "Неверный номер. Пример: +7 916 123-45-67",
+            reply_markup=phone_keyboard(),
+        )
+        return
+    await update_user_profile(message.from_user.id, phone=phone)
+    await _prompt_delivery_address(message, state)
 
 
 @router.message(Checkout.delivery_address)
 async def process_address(message: Message, state: FSMContext) -> None:
-    address = (message.text or "").strip()
-    if len(address) < 5:
-        await message.answer("Укажи полный адрес доставки в Москве.")
+    address = validate_delivery_address(message.text or "")
+    if not address:
+        await message.answer(
+            "Нужен полный адрес в Москве: улица, дом, при необходимости квартира.\n"
+            "Пример: ул. Преображенский Вал, д. 12, кв. 45"
+        )
         return
     await state.update_data(delivery_address=address)
     await state.set_state(Checkout.delivery_time)
-    await message.answer("Укажи удобный интервал доставки (например: 25.10, 08:00–12:00).")
+    await message.answer(
+        "Укажи интервал доставки.\n"
+        "Пример: 08:00–12:00"
+    )
 
 
 @router.message(Checkout.delivery_time)
 async def process_delivery_time(message: Message, state: FSMContext, bot: Bot) -> None:
-    delivery_time = (message.text or "").strip()
-    if len(delivery_time) < 3:
-        await message.answer("Укажи интервал доставки.")
+    delivery_time = validate_delivery_time(message.text or "")
+    if not delivery_time:
+        await message.answer(
+            "Укажи интервал в формате 08:00–12:00.\n"
+            "Время «с» должно быть раньше времени «до»."
+        )
         return
 
     data = await state.get_data()
     order_id = data["order_id"]
     celebration_id = data["celebration_id"]
     delivery_address = data["delivery_address"]
+    user = await get_user(message.from_user.id)
+    customer_name = (user or {}).get("customer_name")
+    customer_phone = (user or {}).get("phone")
 
-    await update_order_delivery(order_id, delivery_address, delivery_time)
+    await update_order_delivery(
+        order_id,
+        delivery_address,
+        delivery_time,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+    )
     order = await get_order(order_id)
     celebration = await get_celebration(celebration_id)
     if not order or not celebration:
@@ -292,7 +408,26 @@ async def test_payment(callback: CallbackQuery, bot: Bot) -> None:
     await callback.answer("Оплачено")
 
     await send_florist_task(bot, order_id, style_label, budget_label, celebration["celebration_date"])
+    await send_admin_logistics(bot, order, celebration)
     logger.info("Order %s paid (test) for user %s", order_id, callback.from_user.id)
+
+
+async def send_admin_logistics(bot: Bot, order: dict, celebration: dict) -> None:
+    if not ADMIN_CHAT_ID:
+        return
+    phone = order.get("customer_phone") or ""
+    text = (
+        f"📦 Логистика заказ #{order['order_id']}\n"
+        f"Заказчик: {order.get('customer_name') or '—'}\n"
+        f"Телефон: {format_phone(phone) if phone else '—'}\n"
+        f"Адрес: {order.get('delivery_address')}\n"
+        f"Интервал: {order.get('delivery_time')}\n"
+        f"Получатель: {celebration['recipient_name']}"
+    )
+    try:
+        await bot.send_message(int(ADMIN_CHAT_ID), text)
+    except Exception:
+        logger.exception("Failed to send logistics for order %s", order["order_id"])
 
 
 async def send_florist_task(
