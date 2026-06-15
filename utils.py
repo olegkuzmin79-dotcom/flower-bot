@@ -8,6 +8,12 @@ from config import MSK_TZ
 
 DATE_PATTERN = re.compile(r"^(\d{1,2})[.\-/](\d{1,2})$")
 NAME_PATTERN = re.compile(r"^[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\s\-']{0,29}$")
+VOWELS = set("аеёиоуыэюяaeiouyAEIOUYАЕЁИОУЫЭЮЯ")
+ADDRESS_MARKERS = re.compile(
+    r"(ул\.?|улиц[аеуы]?|пр\.?|проспект|пер\.?|переулок|бульвар|бул\.?|"
+    r"шоссе|наб\.?|набережн|проезд|аллея|д\.|дом|кв\.?|квартира|корп\.?|строен|стр\.?)",
+    re.IGNORECASE,
+)
 DELIVERY_TIME_PATTERN = re.compile(
     r"^(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})$"
 )
@@ -40,27 +46,53 @@ def validate_celebration_date(raw: str) -> str | None:
     return normalized
 
 
+def _looks_like_gibberish(name: str) -> bool:
+    letters = [c for c in name if c.isalpha()]
+    if len(letters) < 3:
+        return True
+    if not any(c in VOWELS for c in letters):
+        return True
+    consonant_run = 0
+    for char in name.lower():
+        if not char.isalpha():
+            continue
+        if char in VOWELS:
+            consonant_run = 0
+        else:
+            consonant_run += 1
+            if consonant_run > 4:
+                return True
+    if re.search(r"(.)\1{2,}", name.lower()):
+        return True
+    return False
+
+
 def validate_person_name(raw: str) -> str | None:
     name = " ".join((raw or "").split())
     if not NAME_PATTERN.match(name):
         return None
     letters = re.findall(r"[A-Za-zА-Яа-яЁё]", name)
-    if len(letters) < 2:
+    if len(letters) < 3:
         return None
     if re.search(r"\d", name):
+        return None
+    if _looks_like_gibberish(name):
         return None
     return name
 
 
 def validate_delivery_address(raw: str) -> str | None:
     address = " ".join((raw or "").split())
-    if len(address) < 12:
+    if len(address) < 15:
+        return None
+    if not ADDRESS_MARKERS.search(address):
         return None
     if not re.search(r"\d", address):
         return None
     if not re.search(r"[A-Za-zА-Яа-яЁё]{3,}", address):
         return None
-    if len(address.split()) < 2:
+    words = [w for w in re.split(r"[\s,]+", address) if w]
+    if len(words) < 3:
         return None
     return address
 
@@ -123,11 +155,11 @@ def format_price(amount: int) -> str:
     return f"{amount:,} ₽".replace(",", " ")
 
 
+from taboos import format_taboo_list
+
+
 def format_taboo_note(taboo_tags: str | None) -> str:
-    if not taboo_tags:
+    formatted = format_taboo_list(taboo_tags)
+    if not formatted:
         return ""
-    items = [t.strip() for t in taboo_tags.split(",") if t.strip()]
-    if not items:
-        return ""
-    joined = ", ".join(items)
-    return f" (и мы исключили {joined})"
+    return f" (и мы исключили: {formatted})"

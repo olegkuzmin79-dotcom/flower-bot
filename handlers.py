@@ -7,9 +7,9 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
-from bouquets import filter_bouquets, reminder_options_caption, style_image_source
+from bouquets import filter_bouquets
 from config import ADMIN_CHAT_ID, BUDGETS, BUDGET_LABELS, STYLE_LABELS
 from database import (
     add_celebration,
@@ -33,6 +33,7 @@ from keyboards import (
     test_pay_keyboard,
 )
 from payments import create_payment
+from taboos import format_taboo_list
 from utils import (
     format_phone,
     format_price,
@@ -98,8 +99,8 @@ async def process_name(message: Message, state: FSMContext) -> None:
     name = validate_person_name(message.text or "")
     if not name:
         await message.answer(
-            "Введи имя получательницы буквами, без цифр.\n"
-            "Пример: Катя"
+            "Введи настоящее имя буквами (минимум 3), без цифр.\n"
+            "Пример: Катя, Мария"
         )
         return
     data = await state.get_data()
@@ -126,16 +127,17 @@ async def process_date(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("style:"), AddCelebration.style_preference)
 async def process_style(callback: CallbackQuery, state: FSMContext) -> None:
     style = callback.data.split(":", 1)[1]
-    await state.update_data(style_preference=style)
+    await state.update_data(style_preference=style, taboo_selected=[])
     await state.set_state(AddCelebration.taboo_tags)
-    await callback.message.edit_text("Есть ли табу или аллергия?", reply_markup=taboo_keyboard())
+    await callback.message.edit_text(
+        "Отметь ограничения и аллергии (можно несколько).\n"
+        "Нажми «Готово», когда выберешь:",
+        reply_markup=taboo_keyboard(set()),
+    )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("taboo:"), AddCelebration.taboo_tags)
-async def process_taboo(callback: CallbackQuery, state: FSMContext) -> None:
-    taboo_raw = callback.data.split(":", 1)[1]
-    taboo_tags = None if taboo_raw == "none" else taboo_raw
+async def _save_celebration(callback: CallbackQuery, state: FSMContext, taboo_tags: str | None) -> None:
     data = await state.get_data()
     celebration_id = await add_celebration(
         user_id=callback.from_user.id,
@@ -146,15 +148,50 @@ async def process_taboo(callback: CallbackQuery, state: FSMContext) -> None:
     )
     await state.clear()
     style_label = STYLE_LABELS.get(data["style_preference"], data["style_preference"])
+    taboo_line = ""
+    if taboo_tags:
+        taboo_line = f"\n⛔ Исключили: {format_taboo_list(taboo_tags)}"
     await callback.message.edit_text(
         "Готово! Праздник сохранён ✅\n\n"
         f"👤 {data['recipient_name']}\n"
         f"📅 {data['celebration_date']}\n"
-        f"🌸 Стиль: {style_label}\n\n"
+        f"🌸 Стиль: {style_label}{taboo_line}\n\n"
         "За 5 дней до даты пришлю подборку букетов и кнопки оплаты в 1 клик."
     )
-    await callback.answer()
     logger.info("Celebration %s created for user %s", celebration_id, callback.from_user.id)
+
+
+@router.callback_query(F.data.startswith("taboo:"), AddCelebration.taboo_tags)
+async def process_taboo(callback: CallbackQuery, state: FSMContext) -> None:
+    action = callback.data
+    data = await state.get_data()
+    selected = set(data.get("taboo_selected") or [])
+
+    if action == "taboo:done":
+        taboo_tags = ",".join(sorted(selected)) if selected else None
+        await _save_celebration(callback, state, taboo_tags)
+        await callback.answer("Сохранено")
+        return
+
+    if action == "taboo:clear":
+        await state.update_data(taboo_selected=[])
+        await callback.message.edit_reply_markup(reply_markup=taboo_keyboard(set()))
+        await callback.answer("Ограничений нет")
+        return
+
+    if action.startswith("taboo:toggle:"):
+        tag = action.split(":", 2)[2]
+        if tag in selected:
+            selected.remove(tag)
+        else:
+            selected.add(tag)
+        await state.update_data(taboo_selected=list(selected))
+        await callback.message.edit_reply_markup(reply_markup=taboo_keyboard(selected))
+        picked = format_taboo_list(",".join(sorted(selected))) if selected else "пока ничего"
+        await callback.answer(f"Выбрано: {picked}")
+        return
+
+    await callback.answer()
 
 
 @router.message(F.text == "📅 Мои праздники")
@@ -166,7 +203,7 @@ async def list_celebrations(message: Message) -> None:
     lines = ["📅 Твои праздники:\n"]
     for item in items:
         style = STYLE_LABELS.get(item["style_preference"], item["style_preference"])
-        taboo = f"\n   ⛔ табу: {item['taboo_tags']}" if item.get("taboo_tags") else ""
+        taboo = f"\n   ⛔ {format_taboo_list(item['taboo_tags'])}" if item.get("taboo_tags") else ""
         lines.append(f"• {item['recipient_name']} — {item['celebration_date']} ({style}){taboo}")
     await message.answer("\n".join(lines))
 
@@ -303,7 +340,7 @@ async def process_address(message: Message, state: FSMContext) -> None:
     address = validate_delivery_address(message.text or "")
     if not address:
         await message.answer(
-            "Нужен полный адрес в Москве: улица, дом, при необходимости квартира.\n"
+            "Нужен полный адрес: улица, дом, квартира.\n"
             "Пример: ул. Преображенский Вал, д. 12, кв. 45"
         )
         return
@@ -449,11 +486,10 @@ async def send_florist_task(
     except Exception:
         logger.exception("Failed to send florist task for order %s", order_id)
 
-
-def _photo_input(source: str | Path) -> FSInputFile | str:
+def _photo_media(source: str | Path, caption: str | None = None) -> InputMediaPhoto:
     if isinstance(source, Path):
-        return FSInputFile(source)
-    return source
+        return InputMediaPhoto(media=FSInputFile(source), caption=caption)
+    return InputMediaPhoto(media=source, caption=caption)
 
 
 async def send_reminder(bot: Bot, celebration: dict) -> None:
@@ -470,22 +506,21 @@ async def send_reminder(bot: Bot, celebration: dict) -> None:
         f"  {index}. {bouquet.name} — {format_price(bouquet.budget)}"
         for index, bouquet in enumerate(bouquets, start=1)
     )
-    photo_caption = reminder_options_caption(bouquets, style_label)
     text = (
         f"🚨 Привет! Через 5 дней день рождения у: {celebration['recipient_name']} "
         f"({celebration['celebration_date']}).\n\n"
         f"Мы помним, что она любит {style_label.lower()} тона{taboo_note}.\n\n"
-        "Фото выше — пример стиля. Три варианта отличаются размером и составом:\n\n"
+        "Три фото выше — Эконом, Бизнес и Премиум: разный размер и упаковка.\n\n"
         f"💐 Варианты и цены:\n{price_lines}\n\n"
         "Выбери бюджет кнопкой ниже:"
     )
 
     try:
-        await bot.send_photo(
-            user_id,
-            photo=_photo_input(style_image_source(style)),
-            caption=photo_caption,
-        )
+        media = [
+            _photo_media(bouquet.image_source(), caption=bouquet.caption())
+            for bouquet in bouquets
+        ]
+        await bot.send_media_group(user_id, media=media)
         await bot.send_message(
             user_id,
             text,

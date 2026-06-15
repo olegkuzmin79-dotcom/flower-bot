@@ -13,6 +13,7 @@ from utils import (
 def test_names() -> None:
     assert validate_person_name("Катя") == "Катя"
     assert validate_person_name("Тома2341") is None
+    assert validate_person_name("jlkjll") is None
     assert validate_person_name("а") is None
     print("OK names")
 
@@ -28,6 +29,7 @@ def test_addresses() -> None:
     assert validate_delivery_address("ул. Преображенский Вал, д. 12, кв. 45")
     assert validate_delivery_address("преображенка") is None
     assert validate_delivery_address("20ук, ка") is None
+    assert validate_delivery_address("Москва дом 5") is None
     print("OK addresses")
 
 

@@ -37,9 +37,15 @@ def _build_catalog() -> list[Bouquet]:
     budget_keys = ("econom", "business", "premium")
     budget_labels = {"econom": "Эконом", "business": "Бизнес", "premium": "Премиум"}
     tag_map = {
-        "classic": ("классика", "розы"),
-        "tender": ("нежный", "пастель"),
-        "bright": ("яркий", "экзотика"),
+        ("classic", "econom"): ("классика", "розы", "эвкалипт"),
+        ("classic", "business"): ("классика", "розы", "зелень"),
+        ("classic", "premium"): ("классика", "розы"),
+        ("tender", "econom"): ("нежный", "пастель", "розы", "гипсофила"),
+        ("tender", "business"): ("нежный", "пастель", "розы", "эустома"),
+        ("tender", "premium"): ("нежный", "пастель", "пионы", "розы", "орхидеи"),
+        ("bright", "econom"): ("яркий", "герберы", "хризантемы"),
+        ("bright", "business"): ("яркий", "экзотика", "герберы", "тюльпаны"),
+        ("bright", "premium"): ("яркий", "экзотика", "тюльпаны", "орхидеи"),
     }
     description_map = {
         ("classic", "econom"): "15 красных роз, эвкалипт",
@@ -64,7 +70,7 @@ def _build_catalog() -> list[Bouquet]:
                     name=f"{style_names[style]} — {budget_labels[budget_key]}",
                     style=style,
                     budget=budget,
-                    tags=tag_map[style],
+                    tags=tag_map[(style, budget_key)],
                     description=description_map[(style, budget_key)],
                     image_url=f"https://picsum.photos/seed/flower-{bouquet_id}/800/600",
                 )

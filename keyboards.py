@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from config import BUDGETS
+from taboos import TABOO_OPTIONS
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -38,14 +39,17 @@ def style_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def taboo_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Нет", callback_data="taboo:none")],
-            [InlineKeyboardButton(text="Не любит желтый", callback_data="taboo:желтый")],
-            [InlineKeyboardButton(text="Не любит лилии", callback_data="taboo:лилии")],
-        ]
-    )
+def taboo_keyboard(selected: set[str] | None = None) -> InlineKeyboardMarkup:
+    chosen = selected or set()
+    rows: list[list[InlineKeyboardButton]] = []
+    for tag, label in TABOO_OPTIONS:
+        prefix = "✅ " if tag in chosen else ""
+        rows.append(
+            [InlineKeyboardButton(text=f"{prefix}{label}", callback_data=f"taboo:toggle:{tag}")]
+        )
+    rows.append([InlineKeyboardButton(text="✔️ Готово", callback_data="taboo:done")])
+    rows.append([InlineKeyboardButton(text="Без ограничений", callback_data="taboo:clear")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def budget_keyboard(celebration_id: int) -> InlineKeyboardMarkup:
