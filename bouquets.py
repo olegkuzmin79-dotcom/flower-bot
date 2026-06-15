@@ -75,6 +75,25 @@ def _build_catalog() -> list[Bouquet]:
 
 BOUQUETS: list[Bouquet] = _build_catalog()
 
+STYLE_HERO_BOUQUET_ID = {"classic": 1, "tender": 4, "bright": 7}
+
+
+def style_image_source(style: str) -> str | Path:
+    hero_id = STYLE_HERO_BOUQUET_ID.get(style, 1)
+    local = ASSETS_DIR / f"bouquet_{hero_id}.jpg"
+    if local.exists():
+        return local
+    return BOUQUETS[hero_id - 1].image_url if hero_id <= len(BOUQUETS) else BOUQUETS[0].image_url
+
+
+def reminder_options_caption(bouquets: list[Bouquet], style_label: str) -> str:
+    lines = [f"Стиль: {style_label}"]
+    for bouquet in bouquets:
+        budget_label = BUDGET_LABELS.get(bouquet.budget, "")
+        price = f"{bouquet.budget:,} ₽".replace(",", " ")
+        lines.append(f"• {budget_label} — {bouquet.description} ({price})")
+    return "\n".join(lines)
+
 
 def filter_bouquets(
     style: str,

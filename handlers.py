@@ -7,9 +7,9 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
-from bouquets import filter_bouquets
+from bouquets import filter_bouquets, reminder_options_caption, style_image_source
 from config import ADMIN_CHAT_ID, BUDGETS, BUDGET_LABELS, STYLE_LABELS
 from database import (
     add_celebration,
@@ -315,10 +315,10 @@ async def send_florist_task(
         logger.exception("Failed to send florist task for order %s", order_id)
 
 
-def _photo_media(source: str | Path, caption: str | None = None) -> InputMediaPhoto:
+def _photo_input(source: str | Path) -> FSInputFile | str:
     if isinstance(source, Path):
-        return InputMediaPhoto(media=FSInputFile(source), caption=caption)
-    return InputMediaPhoto(media=source, caption=caption)
+        return FSInputFile(source)
+    return source
 
 
 async def send_reminder(bot: Bot, celebration: dict) -> None:
@@ -335,25 +335,22 @@ async def send_reminder(bot: Bot, celebration: dict) -> None:
         f"  {index}. {bouquet.name} — {format_price(bouquet.budget)}"
         for index, bouquet in enumerate(bouquets, start=1)
     )
+    photo_caption = reminder_options_caption(bouquets, style_label)
     text = (
         f"🚨 Привет! Через 5 дней день рождения у: {celebration['recipient_name']} "
         f"({celebration['celebration_date']}).\n\n"
         f"Мы помним, что она любит {style_label.lower()} тона{taboo_note}.\n\n"
-        "Шеф-флорист подобрал 3 свежих варианта букетов на эту неделю под твой бюджет.\n"
-        f"Листай фотографии выше 👆\n\n"
+        "Фото выше — пример стиля. Три варианта отличаются размером и составом:\n\n"
         f"💐 Варианты и цены:\n{price_lines}\n\n"
         "Выбери бюджет кнопкой ниже:"
     )
 
     try:
-        media = [
-            _photo_media(
-                bouquet.image_source(),
-                caption=bouquet.caption() if index == 0 else None,
-            )
-            for index, bouquet in enumerate(bouquets)
-        ]
-        await bot.send_media_group(user_id, media=media)
+        await bot.send_photo(
+            user_id,
+            photo=_photo_input(style_image_source(style)),
+            caption=photo_caption,
+        )
         await bot.send_message(
             user_id,
             text,
