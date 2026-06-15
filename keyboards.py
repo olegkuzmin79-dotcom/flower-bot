@@ -1,5 +1,10 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
+from choices import (
+    COMMON_RECIPIENT_NAMES,
+    DELIVERY_TIME_SLOTS,
+    MOSCOW_DISTRICTS,
+)
 from config import BUDGETS
 from taboos import TABOO_OPTIONS
 
@@ -27,6 +32,50 @@ def recipient_keyboard() -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def recipient_name_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for name in COMMON_RECIPIENT_NAMES:
+        row.append(InlineKeyboardButton(text=name, callback_data=f"rname:{name}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="✏️ Другое имя", callback_data="rname:other")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def district_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for district in MOSCOW_DISTRICTS:
+        row.append(InlineKeyboardButton(text=district, callback_data=f"district:{district}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def apartment_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Частный дом / без кв.", callback_data="apt:none")],
+            [InlineKeyboardButton(text="✏️ Указать квартиру", callback_data="apt:custom")],
+        ]
+    )
+
+
+def delivery_time_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for slot in DELIVERY_TIME_SLOTS:
+        rows.append([InlineKeyboardButton(text=slot, callback_data=f"dtime:{slot}")])
+    rows.append([InlineKeyboardButton(text="✏️ Другое время", callback_data="dtime:other")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def style_keyboard() -> InlineKeyboardMarkup:

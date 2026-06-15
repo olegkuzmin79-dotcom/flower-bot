@@ -81,15 +81,21 @@ def _build_catalog() -> list[Bouquet]:
 
 BOUQUETS: list[Bouquet] = _build_catalog()
 
-STYLE_HERO_BOUQUET_ID = {"classic": 1, "tender": 4, "bright": 7}
+STYLE_ORDER = ("classic", "tender", "bright")
+STYLE_NAMES = {"classic": "Классика", "tender": "Нежность", "bright": "Яркий"}
+BUSINESS_BUDGET = BUDGETS["business"]
+AMOUNT_TO_BUDGET_KEY = {amount: key for key, amount in BUDGETS.items()}
+PACKAGING_NOTE = (
+    "Все букеты в одной премиальной упаковке с лентой. "
+    "На фото — бизнес-вариант; эконом компактнее, премиум — больше цветов."
+)
 
 
 def style_image_source(style: str) -> str | Path:
-    hero_id = STYLE_HERO_BOUQUET_ID.get(style, 1)
-    local = ASSETS_DIR / f"bouquet_{hero_id}.jpg"
-    if local.exists():
-        return local
-    return BOUQUETS[hero_id - 1].image_url if hero_id <= len(BOUQUETS) else BOUQUETS[0].image_url
+    bouquet = business_bouquet(style)
+    if bouquet:
+        return bouquet.image_source()
+    return BOUQUETS[0].image_source()
 
 
 def reminder_options_caption(bouquets: list[Bouquet], style_label: str) -> str:
@@ -116,6 +122,104 @@ def filter_bouquets(
         if taboo and taboo.intersection(bouquet.tags):
             continue
         result.append(bouquet)
+    return result
+
+
+def parse_style_list(style_preference: str | None) -> list[str]:
+    if not style_preference:
+        return list(STYLE_ORDER)
+    parts = [s.strip() for s in style_preference.split(",") if s.strip()]
+    valid = [s for s in parts if s in STYLE_NAMES]
+    return valid or list(STYLE_ORDER)
+
+
+def explicit_styles(style_preference: str | None) -> list[str]:
+    if not style_preference:
+        return []
+    parts = [s.strip() for s in style_preference.split(",") if s.strip()]
+    return [s for s in parts if s in STYLE_NAMES]
+
+
+def bouquets_for_style(style: str, taboo_tags: str | None = None) -> list[Bouquet]:
+    return sorted(filter_bouquets(style, taboo_tags), key=lambda b: b.budget)
+
+
+def business_bouquet(style: str, taboo_tags: str | None = None) -> Bouquet | None:
+    matches = filter_bouquets(style, taboo_tags, BUSINESS_BUDGET)
+    if matches:
+        return matches[0]
+    fallback = filter_bouquets(style, None, BUSINESS_BUDGET)
+    return fallback[0] if fallback else None
+
+
+@dataclass(frozen=True)
+class ReminderStyleCard:
+    style_key: str
+    style_label: str
+    hero: Bouquet
+    tiers: tuple[Bouquet, ...]
+
+
+@dataclass(frozen=True)
+class ReminderDisplay:
+    mode: str
+    packaging_note: str
+    photos: tuple[Bouquet, ...]
+    cards: tuple[ReminderStyleCard, ...]
+    single_style_key: str | None = None
+
+
+def build_reminder_display(style_preference: str | None, taboo_tags: str | None = None) -> ReminderDisplay:
+    explicit = explicit_styles(style_preference)
+    if len(explicit) == 1:
+        style = explicit[0]
+        tiers = bouquets_for_style(style, taboo_tags) or bouquets_for_style(style, None)
+        return ReminderDisplay(
+            mode="budget_photos",
+            packaging_note=PACKAGING_NOTE,
+            photos=tuple(tiers[:3]),
+            cards=(),
+            single_style_key=style,
+        )
+
+    cards: list[ReminderStyleCard] = []
+    for style in parse_style_list(style_preference):
+        hero = business_bouquet(style, taboo_tags)
+        if not hero:
+            continue
+        tiers = bouquets_for_style(style, taboo_tags) or bouquets_for_style(style, None)
+        cards.append(
+            ReminderStyleCard(
+                style_key=style,
+                style_label=STYLE_NAMES[style],
+                hero=hero,
+                tiers=tuple(tiers[:3]),
+            )
+        )
+    return ReminderDisplay(
+        mode="style_heroes",
+        packaging_note=PACKAGING_NOTE,
+        photos=(),
+        cards=tuple(cards),
+    )
+
+
+def filter_bouquets_for_celebration(
+    style_preference: str | None,
+    taboo_tags: str | None = None,
+    budget: int | None = None,
+    limit: int = 3,
+) -> list[Bouquet]:
+    seen: set[int] = set()
+    result: list[Bouquet] = []
+    for style in parse_style_list(style_preference):
+        for bouquet in filter_bouquets(style, taboo_tags, budget):
+            if bouquet.id in seen:
+                continue
+            seen.add(bouquet.id)
+            result.append(bouquet)
+            if len(result) >= limit:
+                return result
     return result
 
 

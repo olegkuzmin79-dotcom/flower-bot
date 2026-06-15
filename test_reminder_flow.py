@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from bouquets import BOUQUETS, filter_bouquets
+from bouquets import BOUQUETS, build_reminder_display, filter_bouquets
 from config import BUDGETS, REMINDER_DAYS_BEFORE
 from utils import days_until, format_price, msk_today, normalize_date
 
@@ -64,11 +64,29 @@ def demo_reminder_text() -> None:
         print(f"  {key}: {format_price(amount)}")
 
 
+def test_reminder_display() -> None:
+    single = build_reminder_display("classic")
+    assert single.mode == "budget_photos"
+    assert len(single.photos) == 3
+    assert all(b.style == "classic" for b in single.photos)
+
+    multi = build_reminder_display("classic,tender")
+    assert multi.mode == "style_heroes"
+    assert len(multi.cards) == 2
+    assert multi.cards[0].hero.budget == BUDGETS["business"]
+
+    all_styles = build_reminder_display("")
+    assert all_styles.mode == "style_heroes"
+    assert len(all_styles.cards) == 3
+    print("OK reminder display")
+
+
 if __name__ == "__main__":
     test_catalog()
     test_filter_by_style()
     test_taboo_filter()
     test_reminder_timing()
     test_date_normalization()
+    test_reminder_display()
     demo_reminder_text()
     print("\nAll checks passed.")
