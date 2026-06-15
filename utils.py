@@ -135,6 +135,25 @@ def compose_delivery_address(
     return ", ".join(parts)
 
 
+def parse_delivery_address(address: str) -> dict[str, str | None] | None:
+    import re
+
+    text = (address or "").strip()
+    match = re.match(
+        r"^(?:Москва|[^,]+), ул\. (.+?), д\. ([^,]+)(?:, к\. ([^,]+))?(?:, кв\. (.+))?$",
+        text,
+    )
+    if not match:
+        return None
+    street, building, corps, apartment = match.groups()
+    return {
+        "delivery_street": street.strip(),
+        "delivery_building": building.strip(),
+        "delivery_corps": (corps or "").strip() or None,
+        "delivery_apartment": (apartment or "").strip() or None,
+    }
+
+
 def validate_order_comment(raw: str) -> str | None:
     from choices import MAX_ORDER_COMMENT
 
@@ -184,19 +203,19 @@ def validate_custom_text(raw: str, max_len: int = 20) -> str | None:
 
 
 def validate_recipient_name(raw: str, max_len: int = 60) -> str | None:
-  parts = (raw or "").split()
-  if not parts or len(parts) > 3:
-    return None
-  normalized = []
-  for part in parts:
-    word = validate_person_name(part)
-    if not word:
-      return None
-    normalized.append(word)
-  name = " ".join(normalized)
-  if len(name) > max_len:
-    return None
-  return name
+    parts = (raw or "").split()
+    if not parts or len(parts) > 3:
+        return None
+    normalized = []
+    for part in parts:
+        word = validate_person_name(part)
+        if not word:
+            return None
+        normalized.append(word)
+    name = " ".join(normalized)
+    if len(name) > max_len:
+        return None
+    return name
 
 
 def validate_full_fio(raw: str, max_len: int = 60) -> str | None:
@@ -389,9 +408,9 @@ def format_reminder_details(celebration: dict) -> str:
 
     styles = parse_style_list(celebration.get("style_preference"))
     if len(styles) == len(STYLE_LABELS):
-        lines.append("Стиль: любой")
+        lines.append("Эффект: подберём сами")
     else:
-        lines.append("Стиль: " + ", ".join(STYLE_LABELS[s] for s in styles))
+        lines.append("Эффект: " + ", ".join(STYLE_LABELS[s] for s in styles))
 
     taboo = format_taboo_list(celebration.get("taboo_tags"))
     if taboo:

@@ -38,11 +38,7 @@ BUDGET_LABELS = {
     12000: "Премиум",
 }
 
-STYLE_LABELS = {
-    "classic": "Классика",
-    "tender": "Нежность",
-    "bright": "Яркий",
-}
+from choices import STYLE_LABELS
 
 MSK_TZ = "Europe/Moscow"
 REMINDER_DAYS_BEFORE = 5

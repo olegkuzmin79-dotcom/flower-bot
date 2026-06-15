@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from config import ASSETS_DIR, BUDGETS, BUDGET_LABELS
+from config import ASSETS_DIR, BUDGETS, BUDGET_LABELS, STYLE_LABELS
+from choices import BUDGET_EFFECT_LABELS, REMINDER_PACKAGING_NOTE
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,11 @@ class Bouquet:
 
     def caption(self) -> str:
         budget_label = BUDGET_LABELS.get(self.budget, "")
-        return f"{self.name}\n{self.description}\n💰 {budget_label} — {self.budget:,} ₽".replace(",", " ")
+        effect = BUDGET_EFFECT_LABELS.get(self.budget, self.description)
+        return f"{budget_label}\n{effect}\n💰 {self.budget:,} ₽".replace(",", " ")
+
+    def user_effect(self) -> str:
+        return BUDGET_EFFECT_LABELS.get(self.budget, self.description)
 
 
 def _build_catalog() -> list[Bouquet]:
@@ -82,13 +87,10 @@ def _build_catalog() -> list[Bouquet]:
 BOUQUETS: list[Bouquet] = _build_catalog()
 
 STYLE_ORDER = ("classic", "tender", "bright")
-STYLE_NAMES = {"classic": "Классика", "tender": "Нежность", "bright": "Яркий"}
+STYLE_NAMES = STYLE_LABELS
 BUSINESS_BUDGET = BUDGETS["business"]
 AMOUNT_TO_BUDGET_KEY = {amount: key for key, amount in BUDGETS.items()}
-PACKAGING_NOTE = (
-    "Все букеты в одной премиальной упаковке с лентой. "
-    "На фото — бизнес-вариант; эконом компактнее, премиум — больше цветов."
-)
+PACKAGING_NOTE = REMINDER_PACKAGING_NOTE
 
 
 def style_image_source(style: str) -> str | Path:
