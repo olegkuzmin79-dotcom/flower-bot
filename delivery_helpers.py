@@ -23,6 +23,7 @@ def delivery_from_latest_order(order: dict[str, Any] | None) -> dict[str, Any] |
         "delivery_apartment": parsed.get("delivery_apartment"),
         "delivery_time": order.get("delivery_time") or "",
         "delivery_comment": order.get("delivery_comment") or "",
+        "recipient_contact_phone": order.get("recipient_contact_phone") or "",
     }
 
 

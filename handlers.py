@@ -13,18 +13,16 @@ from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 from bot_display import (
     build_recipient_name,
     celebration_title,
-    format_celebration_line,
+    format_celebration_line_html,
+    recipient_display_name,
     style_label_for,
 )
 from choices import (
     CALENDAR_IDEAL_DATES,
+    EVENT_AUTO_DATES,
     EVENT_TYPES,
-    MAX_APARTMENT,
-    MAX_BUILDING,
-    MAX_CUSTOMER_NAME,
     MAX_CUSTOM_TEXT,
     MAX_RECIPIENT_FIO,
-    MAX_STREET,
     ONBOARDING_START_HINT,
     PEAK_DATES_MARKETING,
     RECIPIENT_ROLE_CUSTOM,
@@ -36,7 +34,7 @@ from choices import (
     referral_invite_text,
 )
 from bouquets import build_reminder_display
-from config import ADMIN_CHAT_ID, BUDGETS, BUDGET_LABELS, STYLE_LABELS
+from config import ADMIN_CHAT_ID, BUDGETS, BUDGET_LABELS
 from database import (
     add_celebration,
     bind_referrer,
@@ -50,6 +48,7 @@ from database import (
     get_user,
     get_user_celebrations,
     try_grant_referral_bonus,
+    update_celebration,
     update_celebration_delivery,
     update_order_delivery,
     update_order_discount,
@@ -65,8 +64,10 @@ from delivery_helpers import (
 from keyboards import (
     apartment_keyboard,
     budget_keyboard,
-    celebrations_delete_keyboard,
+    celebration_edit_menu_keyboard,
+    celebrations_edit_keyboard,
     comment_skip_keyboard,
+    recipient_phone_keyboard,
     delivery_reuse_keyboard,
     delivery_time_keyboard,
     event_keyboard,
@@ -77,6 +78,7 @@ from keyboards import (
     taboo_keyboard,
     test_pay_keyboard,
 )
+from payment_quips import payment_success_message
 from payments import create_payment
 from referrals import order_charge_amount, parse_referral_start, referral_link
 from taboos import format_taboo_list
@@ -120,6 +122,7 @@ class Checkout(StatesGroup):
     delivery_building = State()
     delivery_apartment_custom = State()
     delivery_time_custom = State()
+    recipient_phone = State()
     delivery_comment = State()
 
 
@@ -138,6 +141,7 @@ async def _ensure_celebration_delivery(celebration: dict, user_id: int) -> dict:
         payload.get("delivery_apartment"),
         payload["delivery_time"],
         payload.get("delivery_comment"),
+        payload.get("recipient_contact_phone"),
     )
     refreshed = await get_celebration(celebration["id"])
     return refreshed or celebration
@@ -157,6 +161,7 @@ async def _delivery_defaults(celebration_id: int, user_id: int) -> dict | None:
         "delivery_apartment": celebration.get("delivery_apartment"),
         "delivery_time": celebration.get("delivery_time") or "",
         "delivery_comment": celebration.get("delivery_comment") or "",
+        "recipient_contact_phone": celebration.get("delivery_contact_phone") or "",
     }
 
 
@@ -168,7 +173,63 @@ def _apply_delivery_defaults(data: dict) -> dict:
         "delivery_apartment": data.get("delivery_apartment"),
         "delivery_time": data.get("delivery_time") or "",
         "delivery_comment": data.get("delivery_comment") or "",
+        "recipient_contact_phone": data.get("recipient_contact_phone") or "",
     }
+
+
+async def _apply_celebration_update(celebration_id: int, user_id: int, **changes) -> bool:
+    celebration = await get_celebration(celebration_id)
+    if not celebration or celebration["user_id"] != user_id:
+        return False
+    role = changes.get("recipient_role", celebration.get("recipient_role"))
+    role_custom = changes.get("recipient_role_custom", celebration.get("recipient_role_custom"))
+    fio = changes.get("recipient_fio", celebration.get("recipient_fio"))
+    recipient_name = build_recipient_name(role or "", role_custom, fio or "")
+    return await update_celebration(
+        celebration_id,
+        user_id,
+        recipient_name=recipient_name,
+        celebration_date=changes.get("celebration_date", celebration["celebration_date"]),
+        style_preference=changes.get("style_preference", celebration.get("style_preference") or ""),
+        taboo_tags=changes.get("taboo_tags", celebration.get("taboo_tags")),
+        recipient_role=role,
+        recipient_role_custom=role_custom,
+        recipient_fio=fio,
+        event_type=changes.get("event_type", celebration.get("event_type")),
+        event_custom=changes.get("event_custom", celebration.get("event_custom")),
+    )
+
+
+async def _show_edit_menu(message: Message, celebration_id: int, note: str = "") -> None:
+    celebration = await get_celebration(celebration_id)
+    if not celebration:
+        await message.answer("Праздник не найден.")
+        return
+    prefix = f"{note}\n\n" if note else ""
+    await message.answer(
+        f"{prefix}Что изменить — {celebration_title(celebration)}?",
+        reply_markup=celebration_edit_menu_keyboard(celebration_id),
+    )
+
+
+async def _go_to_style_step(target: Message, state: FSMContext) -> None:
+    await state.update_data(style_selected=[])
+    await state.set_state(None)
+    await target.answer(
+        "Какой эффект от подарка?\nНе про цветы — про её реакцию.\nМожно выбрать несколько:",
+        reply_markup=style_keyboard(set()),
+    )
+
+
+async def _go_to_taboo_step(callback: CallbackQuery, state: FSMContext, style_pref: str) -> None:
+    await state.update_data(style_preference=style_pref, taboo_selected=[])
+    await state.set_state(AddCelebration.taboo_tags)
+    label = style_label_for({"style_preference": style_pref})
+    await callback.message.edit_text(
+        f"Эффект: {label}\n\n"
+        "Ограничения (можно несколько). «Готово» — сохранить выбор, «Без ограничений» — пропустить:",
+        reply_markup=taboo_keyboard(set()),
+    )
 
 
 @router.message(CommandStart())
@@ -215,13 +276,22 @@ async def add_celebration_start(message: Message, state: FSMContext) -> None:
 async def process_recipient(callback: CallbackQuery, state: FSMContext) -> None:
     role = callback.data.split(":", 1)[1]
     await state.update_data(recipient_role=role)
+    data = await state.get_data()
+    edit_id = data.get("edit_celebration_id")
     if role == RECIPIENT_ROLE_CUSTOM:
         await state.set_state(AddCelebration.recipient_role_custom)
-        await callback.message.edit_text(f"Кого поздравляем? Коротко, до {MAX_CUSTOM_TEXT} символов.")
+        await callback.message.edit_text("Кого поздравляем?")
+        await callback.answer()
+        return
+    if edit_id and data.get("edit_field") == "role":
+        await _apply_celebration_update(edit_id, callback.from_user.id, recipient_role=role, recipient_role_custom=None)
+        await state.clear()
+        await callback.message.edit_text(f"Сохранено: {role}")
+        await _show_edit_menu(callback.message, edit_id)
         await callback.answer()
         return
     await state.set_state(AddCelebration.recipient_fio)
-    await callback.message.edit_text(f"Кого поздравляем: {role}.\nИмя (1–3 слова):")
+    await callback.message.edit_text(f"Кого поздравляем: {role}.\nИмя:")
     await callback.answer()
 
 
@@ -229,11 +299,24 @@ async def process_recipient(callback: CallbackQuery, state: FSMContext) -> None:
 async def process_recipient_role_custom(message: Message, state: FSMContext) -> None:
     custom = validate_custom_text(message.text or "", MAX_CUSTOM_TEXT)
     if not custom:
-        await message.answer(f"До {MAX_CUSTOM_TEXT} символов, только буквы.")
+        await message.answer("Коротко, только буквы.")
         return
     await state.update_data(recipient_role_custom=custom)
+    data = await state.get_data()
+    edit_id = data.get("edit_celebration_id")
+    if edit_id and data.get("edit_field") == "role":
+        await _apply_celebration_update(
+            edit_id,
+            message.from_user.id,
+            recipient_role=RECIPIENT_ROLE_CUSTOM,
+            recipient_role_custom=custom,
+        )
+        await state.clear()
+        await message.answer(f"Сохранено: {custom}")
+        await _show_edit_menu(message, edit_id)
+        return
     await state.set_state(AddCelebration.recipient_fio)
-    await message.answer("Имя (1–3 слова):")
+    await message.answer("Имя:")
 
 
 @router.message(AddCelebration.recipient_fio)
@@ -243,24 +326,65 @@ async def process_recipient_fio(message: Message, state: FSMContext) -> None:
         await message.answer("Имя: от 1 до 3 слов, только буквы.\nПример: Мария или Мария Ивановна")
         return
     await state.update_data(recipient_fio=fio)
+    data = await state.get_data()
+    edit_id = data.get("edit_celebration_id")
+    if edit_id and data.get("edit_field") == "name":
+        await _apply_celebration_update(edit_id, message.from_user.id, recipient_fio=fio)
+        await state.clear()
+        await message.answer(f"Сохранено: {fio}")
+        await _show_edit_menu(message, edit_id)
+        return
     await state.set_state(None)
-    await message.answer("Какое событие?", reply_markup=event_keyboard())
+    await message.answer("С чем поздравляем?", reply_markup=event_keyboard())
 
 
 @router.callback_query(F.data.startswith("event:"))
 async def process_event(callback: CallbackQuery, state: FSMContext) -> None:
     event_type = callback.data.split(":", 1)[1]
-    await state.update_data(event_type=event_type)
+    await state.update_data(event_type=event_type, event_custom=None)
+    data = await state.get_data()
+    edit_id = data.get("edit_celebration_id")
+
     if event_type == "other":
         await state.set_state(AddCelebration.event_custom)
-        await callback.message.edit_text(f"Какое событие? До {MAX_CUSTOM_TEXT} символов.")
+        await callback.message.edit_text("С чем поздравляем?")
         await callback.answer()
         return
+
+    if event_type in EVENT_AUTO_DATES:
+        auto_date = EVENT_AUTO_DATES[event_type]
+        await state.update_data(celebration_date=auto_date)
+        if edit_id and data.get("edit_field") == "event":
+            await _apply_celebration_update(
+                edit_id,
+                callback.from_user.id,
+                event_type=event_type,
+                event_custom=None,
+                celebration_date=auto_date,
+            )
+            await state.clear()
+            await callback.message.edit_text(f"Сохранено: {EVENT_TYPES[event_type]}")
+            await _show_edit_menu(callback.message, edit_id)
+            await callback.answer()
+            return
+        await _go_to_style_step(callback.message, state)
+        await callback.answer()
+        return
+
+    if edit_id and data.get("edit_field") == "event":
+        await state.update_data(edit_field="event_date")
+        await state.set_state(AddCelebration.celebration_date)
+        await callback.message.edit_text(
+            f"С чем поздравляем: {EVENT_TYPES[event_type]}.\n"
+            "Дата ДД.ММ (пример: 25.10):"
+        )
+        await callback.answer()
+        return
+
     await state.set_state(AddCelebration.celebration_date)
-    hint = "08.03" if event_type == "march8" else "25.10"
     await callback.message.edit_text(
-        f"Событие: {EVENT_TYPES[event_type]}.\n"
-        f"Дата ДД.ММ (пример: {hint}):"
+        f"С чем поздравляем: {EVENT_TYPES[event_type]}.\n"
+        "Дата ДД.ММ (пример: 25.10):"
     )
     await callback.answer()
 
@@ -269,9 +393,16 @@ async def process_event(callback: CallbackQuery, state: FSMContext) -> None:
 async def process_event_custom(message: Message, state: FSMContext) -> None:
     custom = validate_custom_text(message.text or "", MAX_CUSTOM_TEXT)
     if not custom:
-        await message.answer(f"До {MAX_CUSTOM_TEXT} символов, только буквы.")
+        await message.answer("Коротко, только буквы.")
         return
     await state.update_data(event_custom=custom)
+    data = await state.get_data()
+    edit_id = data.get("edit_celebration_id")
+    if edit_id and data.get("edit_field") == "event":
+        await state.update_data(edit_field="event_date")
+        await state.set_state(AddCelebration.celebration_date)
+        await message.answer("Дата праздника ДД.ММ (пример: 25.10):")
+        return
     await state.set_state(AddCelebration.celebration_date)
     await message.answer("Дата праздника ДД.ММ (пример: 25.10):")
 
@@ -283,30 +414,84 @@ async def process_celebration_date(message: Message, state: FSMContext) -> None:
         await message.answer("Формат ДД.ММ. Пример: 25.10")
         return
     await state.update_data(celebration_date=celebration_date)
-    await state.set_state(None)
-    await message.answer(
-        "Какой эффект от подарка?\nНе про цветы — про её реакцию:",
-        reply_markup=style_keyboard(),
-    )
+    data = await state.get_data()
+    edit_id = data.get("edit_celebration_id")
+    edit_field = data.get("edit_field")
+    if edit_id and edit_field in ("date", "event_date"):
+        changes: dict = {"celebration_date": celebration_date}
+        if edit_field == "event_date":
+            changes["event_type"] = data.get("event_type")
+            changes["event_custom"] = data.get("event_custom")
+        await _apply_celebration_update(edit_id, message.from_user.id, **changes)
+        await state.clear()
+        await message.answer(f"Сохранено: {format_celebration_date(celebration_date)}")
+        await _show_edit_menu(message, edit_id)
+        return
+    await _go_to_style_step(message, state)
 
 
 @router.callback_query(F.data.startswith("style:"))
 async def process_style(callback: CallbackQuery, state: FSMContext) -> None:
-    style = callback.data.split(":", 1)[1]
-    style_pref = "" if style == "any" else style
-    await state.update_data(style_preference=style_pref, taboo_selected=[])
-    await state.set_state(AddCelebration.taboo_tags)
-    label = "Подберём сами" if not style_pref else STYLE_LABELS.get(style_pref, style_pref)
-    await callback.message.edit_text(
-        f"Эффект: {label}\n\n"
-        "Ограничения (можно несколько). Нажми «Готово»:",
-        reply_markup=taboo_keyboard(set()),
-    )
+    action = callback.data
+    data = await state.get_data()
+    selected = set(data.get("style_selected") or [])
+
+    if action == "style:any":
+        style_pref = ""
+        edit_id = data.get("edit_celebration_id")
+        if edit_id and data.get("edit_field") == "style":
+            await _apply_celebration_update(edit_id, callback.from_user.id, style_preference=style_pref)
+            await state.clear()
+            await callback.message.edit_text("Сохранено: подберём сами")
+            await _show_edit_menu(callback.message, edit_id)
+            await callback.answer()
+            return
+        await _go_to_taboo_step(callback, state, style_pref)
+        await callback.answer()
+        return
+
+    if action == "style:done":
+        style_pref = ",".join(sorted(selected)) if selected else ""
+        edit_id = data.get("edit_celebration_id")
+        if edit_id and data.get("edit_field") == "style":
+            await _apply_celebration_update(edit_id, callback.from_user.id, style_preference=style_pref)
+            await state.clear()
+            label = style_label_for({"style_preference": style_pref})
+            await callback.message.edit_text(f"Сохранено: {label}")
+            await _show_edit_menu(callback.message, edit_id)
+            await callback.answer()
+            return
+        await _go_to_taboo_step(callback, state, style_pref)
+        await callback.answer()
+        return
+
+    if action.startswith("style:toggle:"):
+        key = action.split(":", 2)[2]
+        if key in selected:
+            selected.remove(key)
+        else:
+            selected.add(key)
+        await state.update_data(style_selected=list(selected))
+        await callback.message.edit_reply_markup(reply_markup=style_keyboard(selected))
+        await callback.answer()
+        return
     await callback.answer()
 
 
 async def _save_celebration(callback: CallbackQuery, state: FSMContext, taboo_tags: str | None) -> None:
     data = await state.get_data()
+    edit_id = data.get("edit_celebration_id")
+    if edit_id and data.get("edit_field") == "taboo":
+        ok = await _apply_celebration_update(edit_id, callback.from_user.id, taboo_tags=taboo_tags)
+        await state.clear()
+        if ok:
+            taboo_line = format_taboo_list(taboo_tags) or "без ограничений"
+            await callback.message.edit_text(f"Сохранено: {taboo_line}")
+            await _show_edit_menu(callback.message, edit_id)
+        else:
+            await callback.message.edit_text("Не удалось сохранить.")
+        return
+
     role = data["recipient_role"]
     role_custom = data.get("recipient_role_custom")
     fio = data["recipient_fio"]
@@ -333,7 +518,7 @@ async def _save_celebration(callback: CallbackQuery, state: FSMContext, taboo_ta
         "Готово! Праздник сохранён ✅\n\n"
         f"👤 {recipient_name}\n"
         f"📅 {format_celebration_date(data['celebration_date'])}\n"
-        f"🎯 {style_label}{taboo_line}\n\n"
+        f"{style_label}{taboo_line}\n\n"
         f"{warn}\n\n{calendar_onboarding_nudge(count)}"
     )
     if granted:
@@ -359,8 +544,12 @@ async def process_taboo(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer("Сохранено")
         return
     if action == "taboo:clear":
-        await state.update_data(taboo_selected=[])
-        await callback.message.edit_reply_markup(reply_markup=taboo_keyboard(set()))
+        edit_id = data.get("edit_celebration_id")
+        if edit_id and data.get("edit_field") == "taboo":
+            await _save_celebration(callback, state, None)
+            await callback.answer("Без ограничений")
+            return
+        await _save_celebration(callback, state, None)
         await callback.answer("Без ограничений")
         return
     if action.startswith("taboo:toggle:"):
@@ -383,27 +572,82 @@ async def list_celebrations(message: Message) -> None:
         await message.answer("Пока нет праздников. Нажми «➕ Добавить праздник».")
         return
     items.sort(key=lambda c: (days_until(c["celebration_date"]), c.get("id", 0)))
-    lines = ["📅 Твои праздники:\n", * [format_celebration_line(c) for c in items]]
-    delete_items = [(c["id"], celebration_title(c)) for c in items]
+    lines = ["📅 Твои праздники:\n", *[format_celebration_line_html(c) for c in items]]
+    edit_items = [(c["id"], celebration_title(c)) for c in items]
     await message.answer(
         "\n".join(lines),
-        reply_markup=celebrations_delete_keyboard(delete_items),
+        reply_markup=celebrations_edit_keyboard(edit_items),
+        parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.startswith("delcel:"))
-async def delete_celebration_handler(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("edcel:"))
+async def edit_celebration_menu(callback: CallbackQuery, state: FSMContext) -> None:
     celebration_id = int(callback.data.split(":")[1])
     celebration = await get_celebration(celebration_id)
     if not celebration or celebration["user_id"] != callback.from_user.id:
         await callback.answer("Не найден", show_alert=True)
         return
-    ok = await delete_celebration(celebration_id, callback.from_user.id)
-    if ok:
-        await callback.message.edit_text(f"🗑 Удалено: {celebration_title(celebration)}")
-        await callback.answer("Удалено")
-    else:
-        await callback.answer("Не удалось удалить", show_alert=True)
+    await state.clear()
+    await callback.message.answer(
+        f"Редактирование: {celebration_title(celebration)}",
+        reply_markup=celebration_edit_menu_keyboard(celebration_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("efld:"))
+async def edit_celebration_field(callback: CallbackQuery, state: FSMContext) -> None:
+    _, cid_str, field = callback.data.split(":", 2)
+    celebration_id = int(cid_str)
+    celebration = await get_celebration(celebration_id)
+    if not celebration or celebration["user_id"] != callback.from_user.id:
+        await callback.answer("Не найден", show_alert=True)
+        return
+
+    if field == "delete":
+        ok = await delete_celebration(celebration_id, callback.from_user.id)
+        if ok:
+            await callback.message.edit_text(f"🗑 Удалено: {celebration_title(celebration)}")
+            await callback.answer("Удалено")
+        else:
+            await callback.answer("Не удалось удалить", show_alert=True)
+        return
+
+    await state.update_data(edit_celebration_id=celebration_id, edit_field=field)
+
+    if field == "role":
+        await callback.message.edit_text("Кого поздравляем?", reply_markup=recipient_keyboard())
+    elif field == "name":
+        await state.set_state(AddCelebration.recipient_fio)
+        await callback.message.edit_text("Имя:")
+    elif field == "event":
+        await callback.message.edit_text("С чем поздравляем?", reply_markup=event_keyboard())
+    elif field == "date":
+        await state.set_state(AddCelebration.celebration_date)
+        await callback.message.edit_text(
+            f"Дата праздника ДД.ММ (пример: {format_celebration_date(celebration['celebration_date'])}):"
+        )
+    elif field == "style":
+        selected = set((celebration.get("style_preference") or "").split(",")) - {""}
+        await state.update_data(style_selected=list(selected))
+        await callback.message.edit_text(
+            "Какой эффект от подарка?\nМожно выбрать несколько:",
+            reply_markup=style_keyboard(selected),
+        )
+    elif field == "taboo":
+        selected = {
+            t.strip()
+            for t in (celebration.get("taboo_tags") or "").split(",")
+            if t.strip()
+        }
+        await state.update_data(taboo_selected=list(selected))
+        await state.set_state(AddCelebration.taboo_tags)
+        await callback.message.edit_text(
+            "Ограничения (можно несколько). «Готово» — сохранить, «Без ограничений» — сбросить:",
+            reply_markup=taboo_keyboard(selected),
+        )
+    await callback.answer()
 
 
 async def _send_test_reminder(message: Message, bot: Bot) -> None:
@@ -456,7 +700,8 @@ async def select_budget(callback: CallbackQuery, state: FSMContext) -> None:
     if not (user or {}).get("customer_name"):
         await state.set_state(Checkout.customer_name_custom)
         await callback.message.answer(
-            f"Твоё ФИО — три слова (имя отчество фамилия), до {MAX_CUSTOMER_NAME} символов."
+            "Твоё имя для заказа — как к тебе обратится курьер.\n"
+            "ФИО, три слова через пробел:"
         )
         return
     if not (user or {}).get("phone"):
@@ -532,7 +777,8 @@ async def _start_delivery(message: Message, state: FSMContext, user_id: int, cel
 async def _prompt_street(message: Message, state: FSMContext) -> None:
     await state.set_state(Checkout.delivery_street)
     await message.answer(
-        f"Доставка по Москве.\nУлица (до {MAX_STREET} символов), без «ул.»:\n"
+        "Доставка по Москве.\n"
+        "Улица, без «ул.»:\n"
         "Пример: Преображенский Вал"
     )
 
@@ -552,7 +798,7 @@ async def process_delivery_reuse(callback: CallbackQuery, state: FSMContext) -> 
     await state.update_data(**_apply_delivery_defaults(defaults))
     await callback.message.answer("Ок, адрес как в прошлый раз.")
     if defaults.get("delivery_time"):
-        await _prompt_comment(callback.message, state)
+        await _after_delivery_time(callback.message, state, callback.from_user.id)
     else:
         await callback.message.answer("Интервал доставки:", reply_markup=delivery_time_keyboard())
     await callback.answer()
@@ -562,18 +808,18 @@ async def process_delivery_reuse(callback: CallbackQuery, state: FSMContext) -> 
 async def process_street(message: Message, state: FSMContext) -> None:
     street = validate_street_name(message.text or "")
     if not street:
-        await message.answer(f"Улица: 3–{MAX_STREET} символов. Пример: Тверская")
+        await message.answer("Улица: от 3 символов. Пример: Тверская")
         return
     await state.update_data(delivery_street=street)
     await state.set_state(Checkout.delivery_building)
-    await message.answer(f"Дом (до {MAX_BUILDING} символов). Можно 12к2:")
+    await message.answer("Дом и корпус:\nМожно 12к2")
 
 
 @router.message(Checkout.delivery_building)
 async def process_building(message: Message, state: FSMContext) -> None:
     building = validate_building(message.text or "")
     if not building:
-        await message.answer(f"Дом с цифрой, до {MAX_BUILDING} символов.")
+        await message.answer("Дом с цифрой. Пример: 12к2")
         return
     await state.update_data(delivery_building=building, delivery_corps=None)
     await state.set_state(None)
@@ -585,7 +831,7 @@ async def process_apartment_pick(callback: CallbackQuery, state: FSMContext) -> 
     action = callback.data.split(":", 1)[1]
     if action == "custom":
         await state.set_state(Checkout.delivery_apartment_custom)
-        await callback.message.answer(f"Номер квартиры (до {MAX_APARTMENT} символов):")
+        await callback.message.answer("Номер квартиры:\nПример: 15")
         await callback.answer()
         return
     await state.update_data(delivery_apartment=None)
@@ -614,7 +860,7 @@ async def process_delivery_time_pick(callback: CallbackQuery, state: FSMContext)
         return
     await state.update_data(delivery_time=picked)
     await callback.answer()
-    await _prompt_comment(callback.message, state)
+    await _after_delivery_time(callback.message, state, callback.from_user.id)
 
 
 @router.message(Checkout.delivery_time_custom)
@@ -624,6 +870,51 @@ async def process_delivery_time_custom(message: Message, state: FSMContext) -> N
         await message.answer("Формат: 08:00–12:00")
         return
     await state.update_data(delivery_time=delivery_time)
+    await _after_delivery_time(message, state, message.from_user.id)
+
+
+async def _after_delivery_time(message: Message, state: FSMContext, user_id: int) -> None:
+    data = await state.get_data()
+    if data.get("recipient_contact_phone"):
+        await _prompt_comment(message, state)
+        return
+    await _prompt_recipient_phone(message, state, user_id)
+
+
+async def _prompt_recipient_phone(message: Message, state: FSMContext, user_id: int) -> None:
+    data = await state.get_data()
+    celebration = await get_celebration(data.get("celebration_id") or 0)
+    name = recipient_display_name(celebration) if celebration else "получателя"
+    user = await get_user(user_id)
+    await state.set_state(Checkout.recipient_phone)
+    text = f"Телефон {name} — кто встретит курьера:"
+    if user and user.get("phone"):
+        await message.answer(text, reply_markup=recipient_phone_keyboard())
+    else:
+        await message.answer(text)
+
+
+@router.callback_query(F.data == "rcpt:same")
+async def recipient_phone_same_as_customer(callback: CallbackQuery, state: FSMContext) -> None:
+    user = await get_user(callback.from_user.id)
+    phone = (user or {}).get("phone")
+    if not phone:
+        await callback.answer("Сначала укажи свой телефон", show_alert=True)
+        return
+    await state.update_data(recipient_contact_phone=phone)
+    await state.set_state(None)
+    await callback.answer()
+    await _prompt_comment(callback.message, state)
+
+
+@router.message(Checkout.recipient_phone)
+async def process_recipient_phone(message: Message, state: FSMContext) -> None:
+    phone = validate_russian_mobile(message.text or "") or normalize_phone(message.text or "")
+    if not phone:
+        await message.answer("Мобильный РФ: +7 9XX XXX-XX-XX", reply_markup=recipient_phone_keyboard())
+        return
+    await state.update_data(recipient_contact_phone=phone)
+    await state.set_state(None)
     await _prompt_comment(message, state)
 
 
@@ -673,6 +964,11 @@ async def _finalize_checkout(message: Message, state: FSMContext, bot: Bot) -> N
 
     user = await get_user(message.from_user.id)
     comment = data.get("delivery_comment")
+    recipient_phone = data.get("recipient_contact_phone")
+    if not recipient_phone:
+        await message.answer("Укажи телефон получателя.")
+        await _prompt_recipient_phone(message, state, message.from_user.id)
+        return
 
     await update_order_delivery(
         order_id,
@@ -681,6 +977,7 @@ async def _finalize_checkout(message: Message, state: FSMContext, bot: Bot) -> N
         customer_name=(user or {}).get("customer_name"),
         customer_phone=(user or {}).get("phone"),
         delivery_comment=comment,
+        recipient_contact_phone=recipient_phone,
     )
     street = data.get("delivery_street", "")
     building = data.get("delivery_building", "")
@@ -694,6 +991,7 @@ async def _finalize_checkout(message: Message, state: FSMContext, bot: Bot) -> N
             data.get("delivery_apartment"),
             delivery_time,
             comment,
+            recipient_phone,
         )
 
     order = await get_order(order_id)
@@ -728,16 +1026,21 @@ async def _finalize_checkout(message: Message, state: FSMContext, bot: Bot) -> N
     discount_line = ""
     if discount:
         discount_line = f"\nСкидка: −{format_price(discount)}\nК оплате: {format_price(charge)}"
+    comment_line = f"\nКомментарий: {comment}" if comment else ""
+    recipient_line = f"\nТелефон получателя: {format_phone(recipient_phone)}"
 
     if payment.get("test_mode"):
         await message.answer(
             f"Заказ #{order_id}\n{format_price(amount)}{discount_line}\n"
-            f"{delivery_address}\n{delivery_time}\n\n"
+            f"{delivery_address}\n{delivery_time}{recipient_line}{comment_line}\n\n"
             "Тестовая оплата:",
             reply_markup=test_pay_keyboard(order_id),
         )
         return
-    await message.answer(f"Заказ #{order_id}.{discount_line}\n{payment['confirmation_url']}")
+    await message.answer(
+        f"Заказ #{order_id}.{discount_line}\n{delivery_address}\n{delivery_time}"
+        f"{recipient_line}{comment_line}\n\n{payment['confirmation_url']}"
+    )
 
 
 @router.callback_query(F.data.startswith("pay:test:"))
@@ -759,8 +1062,11 @@ async def test_payment(callback: CallbackQuery, bot: Bot) -> None:
 
     style_label = style_label_for(celebration)
     budget_label = BUDGET_LABELS.get(order["budget_selected"], str(order["budget_selected"]))
+    role = celebration.get("recipient_role") or ""
+    quip = payment_success_message(role, order["budget_selected"])
     await callback.message.edit_text(
-        f"✅ Оплата прошла!\nЗаказ #{order_id} в работе.\n"
+        f"✅ Оплата прошла!\n{quip}\n\n"
+        f"Заказ #{order_id} в работе.\n"
         f"Доставка: {order['delivery_address']}, {order['delivery_time']}"
     )
     await callback.answer("Оплачено")
@@ -771,15 +1077,18 @@ async def test_payment(callback: CallbackQuery, bot: Bot) -> None:
 async def send_admin_logistics(bot: Bot, order: dict, celebration: dict) -> None:
     if not ADMIN_CHAT_ID:
         return
-    phone = order.get("customer_phone") or ""
+    customer_phone = order.get("customer_phone") or ""
+    recipient_phone = order.get("recipient_contact_phone") or ""
     comment = order.get("delivery_comment") or ""
+    recipient_name = recipient_display_name(celebration)
     text = (
         f"📦 Заказ #{order['order_id']}\n"
         f"Заказчик: {order.get('customer_name') or '—'}\n"
-        f"Телефон: {format_phone(phone) if phone else '—'}\n"
+        f"Телефон заказчика: {format_phone(customer_phone) if customer_phone else '—'}\n"
+        f"Имя получателя: {recipient_name}\n"
+        f"Телефон получателя: {format_phone(recipient_phone) if recipient_phone else '—'}\n"
         f"Адрес: {order.get('delivery_address')}\n"
-        f"Интервал: {order.get('delivery_time')}\n"
-        f"Получатель: {celebration['recipient_name']}"
+        f"Интервал: {order.get('delivery_time')}"
     )
     if comment:
         text += f"\nКомментарий: {comment}"
@@ -820,7 +1129,7 @@ async def send_reminder(bot: Bot, celebration: dict) -> None:
 
     if display.mode == "budget_photos":
         media_bouquets = list(display.photos)
-        intro = f"Три уровня подарка.\n{display.packaging_note}"
+        intro = display.packaging_note
     else:
         media_bouquets = [card.hero for card in display.cards]
         lines = [display.packaging_note, ""]
@@ -832,19 +1141,27 @@ async def send_reminder(bot: Bot, celebration: dict) -> None:
             lines.append("")
         intro = "\n".join(lines).strip()
 
+    tier_labels = ("Эконом", "Бизнес", "Премиум")
     price_lines = "\n".join(
-        f"  {index}. {BUDGET_LABELS.get(b.budget, '')} — {format_price(b.budget)}"
+        f"  {index}. {tier_labels[index - 1] if index <= len(tier_labels) else BUDGET_LABELS.get(b.budget, '')}"
+        f" — {format_price(b.budget)}"
         for index, b in enumerate(media_bouquets, start=1)
     )
     text = (
         f"🚨 Через 5 дней праздник:\n\n"
         f"{format_reminder_details(celebration)}\n\n"
         f"{intro}\n\n"
-        f"💐 Уровни:\n{price_lines}\n\n"
-        "Выбери уровень:"
+        f"💐 Варианты:\n{price_lines}\n\n"
+        "Выбери вариант:"
     )
     try:
-        media = [_photo_media(b.image_source(), caption=b.caption()) for b in media_bouquets]
+        media = [
+            _photo_media(
+                b.image_source(),
+                caption=f"{BUDGET_LABELS.get(b.budget, '')}\n{format_price(b.budget)}",
+            )
+            for b in media_bouquets
+        ]
         await bot.send_media_group(user_id, media=media)
         await bot.send_message(user_id, text, reply_markup=budget_keyboard(celebration["id"]))
     except Exception:

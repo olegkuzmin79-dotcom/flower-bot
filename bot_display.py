@@ -6,6 +6,12 @@ from bouquets import parse_style_list
 from choices import EVENT_TYPES, RECIPIENT_ROLE_CUSTOM, RECIPIENT_ROLES, STYLE_LABELS
 from utils import days_until, format_celebration_date
 
+STYLE_EMOJI: dict[str, str] = {
+    "classic": "🌹",
+    "tender": "🌸",
+    "bright": "💐",
+}
+
 
 def role_label(celebration: dict[str, Any]) -> str:
     role = celebration.get("recipient_role")
@@ -44,7 +50,8 @@ def style_label_for(celebration: dict[str, Any]) -> str:
     styles = parse_style_list(pref)
     if len(styles) >= len(STYLE_LABELS):
         return "Подберём сами"
-    return ", ".join(STYLE_LABELS[s] for s in styles)
+    parts = [f"{STYLE_EMOJI.get(s, '💐')} {STYLE_LABELS[s]}" for s in styles]
+    return ", ".join(parts)
 
 
 def format_celebration_line(celebration: dict[str, Any]) -> str:
@@ -55,9 +62,35 @@ def format_celebration_line(celebration: dict[str, Any]) -> str:
     warn = " ⚠️ след. год" if days < 5 else ""
     style = style_label_for(celebration)
     event_part = f"{event}, " if event else ""
-    return f"• {title} — {event_part}{date} (через {days} дн.){warn}\n  🎯 {style}"
+    return f"• {title} — {event_part}{date} (через {days} дн.){warn}\n  {style}"
+
+
+def format_celebration_line_html(celebration: dict[str, Any]) -> str:
+    who = role_label(celebration)
+    fio = celebration.get("recipient_fio") or ""
+    if fio:
+        title = f"<b>{who} · {fio}</b>"
+    else:
+        title = f"<b>{who}</b>"
+    event = event_label(celebration)
+    date = format_celebration_date(celebration["celebration_date"])
+    days = days_until(celebration["celebration_date"])
+    warn = " ⚠️ след. год" if days < 5 else ""
+    style = style_label_for(celebration)
+    event_part = f"{event}, " if event else ""
+    return f"• {title} — {event_part}{date} (через {days} дн.){warn}\n  {style}"
 
 
 def build_recipient_name(role: str, role_custom: str | None, fio: str) -> str:
     who = role_custom if role == RECIPIENT_ROLE_CUSTOM else role
     return f"{who} · {fio}"
+
+
+def recipient_display_name(celebration: dict[str, Any]) -> str:
+    fio = celebration.get("recipient_fio")
+    if fio:
+        return fio
+    name = celebration.get("recipient_name") or ""
+    if " · " in name:
+        return name.split(" · ", 1)[1]
+    return name

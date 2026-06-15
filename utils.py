@@ -384,7 +384,7 @@ def format_celebration_date(dd_mm: str) -> str:
 
 def format_reminder_details(celebration: dict) -> str:
     from bouquets import parse_style_list
-    from config import STYLE_LABELS
+    from choices import EVENT_TYPES, STYLE_LABELS
 
     lines: list[str] = []
     role = celebration.get("recipient_role")
@@ -399,10 +399,10 @@ def format_reminder_details(celebration: dict) -> str:
     event_type = celebration.get("event_type")
     if event_type:
         if event_type == "other":
-            event = celebration.get("event_custom") or "Другое событие"
+            event = celebration.get("event_custom") or EVENT_TYPES.get("other", "Свой вариант")
         else:
-            event = {"birthday": "День рождения", "march8": "8 марта"}.get(event_type, event_type)
-        lines.append(f"Событие: {event}")
+            event = EVENT_TYPES.get(event_type, event_type)
+        lines.append(f"С чем поздравляем: {event}")
 
     lines.append(f"Дата: {format_celebration_date(celebration['celebration_date'])}")
 

@@ -319,6 +319,46 @@ async def delete_celebration(celebration_id: int, user_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+async def update_celebration(
+    celebration_id: int,
+    user_id: int,
+    recipient_name: str,
+    celebration_date: str,
+    style_preference: str,
+    taboo_tags: str | None,
+    recipient_role: str | None = None,
+    recipient_role_custom: str | None = None,
+    recipient_fio: str | None = None,
+    event_type: str | None = None,
+    event_custom: str | None = None,
+) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE celebrations
+            SET recipient_name = ?, celebration_date = ?, style_preference = ?, taboo_tags = ?,
+                recipient_role = ?, recipient_role_custom = ?, recipient_fio = ?,
+                event_type = ?, event_custom = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                recipient_name,
+                celebration_date,
+                style_preference,
+                taboo_tags,
+                recipient_role,
+                recipient_role_custom,
+                recipient_fio,
+                event_type,
+                event_custom,
+                celebration_id,
+                user_id,
+            ),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_celebration_latest_order(celebration_id: int) -> dict[str, Any] | None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -342,13 +382,15 @@ async def update_celebration_delivery(
     delivery_apartment: str | None,
     delivery_time: str,
     delivery_comment: str | None = None,
+    delivery_contact_phone: str | None = None,
 ) -> None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
             """
             UPDATE celebrations
             SET delivery_street = ?, delivery_building = ?, delivery_corps = ?,
-                delivery_apartment = ?, delivery_time = ?, delivery_comment = ?
+                delivery_apartment = ?, delivery_time = ?, delivery_comment = ?,
+                delivery_contact_phone = COALESCE(?, delivery_contact_phone)
             WHERE id = ? AND user_id = ?
             """,
             (
@@ -358,6 +400,7 @@ async def update_celebration_delivery(
                 delivery_apartment,
                 delivery_time,
                 delivery_comment,
+                delivery_contact_phone,
                 celebration_id,
                 user_id,
             ),
@@ -419,6 +462,7 @@ async def update_order_delivery(
     customer_name: str | None = None,
     customer_phone: str | None = None,
     delivery_comment: str | None = None,
+    recipient_contact_phone: str | None = None,
 ) -> None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
@@ -427,7 +471,8 @@ async def update_order_delivery(
             SET delivery_address = ?, delivery_time = ?,
                 customer_name = COALESCE(?, customer_name),
                 customer_phone = COALESCE(?, customer_phone),
-                delivery_comment = COALESCE(?, delivery_comment)
+                delivery_comment = COALESCE(?, delivery_comment),
+                recipient_contact_phone = COALESCE(?, recipient_contact_phone)
             WHERE order_id = ?
             """,
             (
@@ -436,6 +481,7 @@ async def update_order_delivery(
                 customer_name,
                 customer_phone,
                 delivery_comment,
+                recipient_contact_phone,
                 order_id,
             ),
         )
