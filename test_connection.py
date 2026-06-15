@@ -5,7 +5,7 @@ import asyncio
 import sys
 
 from bot_session import HAPP_SOCKS5, SYSTEM_PROXY, create_bot
-from config import BOT_TOKEN, TELEGRAM_PROXY
+from config import BOT_TOKEN, DEV_MODE, TELEGRAM_PROXY
 
 
 def _proxy_candidates() -> list[str | None]:
@@ -61,6 +61,10 @@ async def main() -> None:
         sys.exit(1)
 
     print("Проверяю связь с Telegram.\n")
+    if DEV_MODE:
+        print("Режим: DEV (токен BOT_TOKEN_DEV)\n")
+    else:
+        print("Режим: production token (для локалки лучше DEV=1 в .env)\n")
     print("Happ: VPN подключён + Системный прокси ВКЛ")
     print(f"Windows прокси → используем {HAPP_SOCKS5}\n")
 

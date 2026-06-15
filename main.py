@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramNetworkError
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot_session import create_bot
-from config import BOT_TOKEN
+from config import BOT_TOKEN, DEV_MODE
 from database import init_db
 from handlers import router
 from scheduler import setup_scheduler
@@ -26,8 +26,19 @@ MAX_RETRY_DELAY_SEC = 60
 
 async def main() -> None:
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN is not set. Copy .env.example to .env and fill BOT_TOKEN.")
+        if DEV_MODE:
+            logger.error(
+                "DEV=1 but BOT_TOKEN_DEV is empty. Create a dev bot in @BotFather "
+                "and set BOT_TOKEN_DEV in .env. See LOCAL_DEV.md"
+            )
+        else:
+            logger.error("BOT_TOKEN is not set. Copy .env.example to .env and fill BOT_TOKEN.")
         sys.exit(1)
+
+    if DEV_MODE:
+        logger.info("DEV mode: local bot, database %s", "data/bot_dev.db")
+    else:
+        logger.info("Production mode (set DEV=1 in .env for local development)")
 
     await init_db()
 
