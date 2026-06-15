@@ -33,9 +33,28 @@ ADMIN_CHAT_ID=500975404
 USE_TEST_PAYMENTS=1
 ```
 
-`TELEGRAM_PROXY` — если Bot API с ПК не ходит (РФ). VPN Happ: включить **Системный прокси** (+ TUN при необходимости).
+`TELEGRAM_PROXY=socks5://127.0.0.1:10808` — прокси **только для Python-бота**, не для всего ПК.
 
 База локально: `data/bot_dev.db` (отдельно от продакшена).
+
+---
+
+## VPN и Cursor (важно)
+
+**Не включай TUN и системный прокси** — из‑за этого падает Cursor и весь интернет на ПК.
+
+Правильная схема для Happ:
+
+| Настройка | Значение |
+|-----------|----------|
+| VPN подключён | Да (чтобы порт SOCKS работал) |
+| **TUN** | **Выкл** |
+| **Системный прокси** | **Выкл** |
+| В `.env` бота | `TELEGRAM_PROXY=socks5://127.0.0.1:10808` |
+
+Тогда **только бот** ходит в Telegram через SOCKS, а **Cursor и браузер** — как обычно.
+
+Если SOCKS не поднимается без TUN — полный UI-тест только через Railway; на ПК остаются unit-тесты.
 
 ---
 
@@ -53,10 +72,18 @@ python test_validation.py
 python test_reminder_flow.py
 ```
 
-**Полный бот:**
+**Полный бот** (обход блокировки PowerShell):
+
+```cmd
+run_local.bat
+```
+
+Или двойной клик по `run_local.bat` в проводнике.
+
+Альтернатива PowerShell (если нужен `.ps1`):
 
 ```powershell
-.\run_local.ps1
+powershell -ExecutionPolicy Bypass -File .\run_local.ps1
 ```
 
 Или вручную:
@@ -87,5 +114,5 @@ python main.py
 Прокси на ПК не достаёт до `api.telegram.org`:
 
 - сменить сервер VPN;
-- проверить Happ: системный прокси + TUN;
+- Happ: VPN вкл, **TUN выкл**, **системный прокси выкл**, в `.env` только `TELEGRAM_PROXY`;
 - тогда тестировать через Railway (деплой), unit-тесты — всё равно на ПК.

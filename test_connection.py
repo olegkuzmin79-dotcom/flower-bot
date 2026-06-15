@@ -36,7 +36,7 @@ def _label(proxy: str | None) -> str:
 
 
 async def _try_proxy(proxy: str | None) -> str | None:
-    print(f"  → {_label(proxy)} ... ", end="", flush=True)
+    print(f"  -> {_label(proxy)} ... ", end="", flush=True)
     bot = create_bot(proxy=proxy)
     try:
         me = await bot.get_me()
@@ -66,12 +66,12 @@ async def main() -> None:
     else:
         print("Режим: production token (для локалки лучше DEV=1 в .env)\n")
     print("Happ: VPN подключён + Системный прокси ВКЛ")
-    print(f"Windows прокси → используем {HAPP_SOCKS5}\n")
+    print(f"Windows прокси -> используем {HAPP_SOCKS5}\n")
 
     for proxy in _proxy_candidates():
         username = await _try_proxy(proxy)
         if username:
-            print(f"\n✅ Работает! Бот @{username}")
+            print(f"\nOK! Bot @{username}")
             if proxy in (SYSTEM_PROXY, HAPP_SOCKS5):
                 print(f"\nВ .env добавьте и сохраните (Ctrl+S):")
                 print(f"TELEGRAM_PROXY={HAPP_SOCKS5}")
@@ -81,13 +81,13 @@ async def main() -> None:
             return
 
     print(
-        "\n❌ Не вышло.\n"
+        "\nFAIL.\n"
         "Прокси 127.0.0.1:10808 виден, но Telegram API не отвечает.\n"
         "Попробуйте:\n"
-        "1. В Happ смените сервер (другая страна)\n"
-        "2. Доп. настройки → включите TUN (от имени администратора)\n"
-        "3. Переподключите VPN → python test_connection.py\n"
-        "\nЕсли снова FAIL — бот на сервере (Railway), без VPN на ПК."
+        "1. Happ: VPN вкл, TUN ВЫКЛ, системный прокси ВЫКЛ\n"
+        "2. В .env: TELEGRAM_PROXY=socks5://127.0.0.1:10808\n"
+        "3. Смените сервер VPN -> python test_connection.py\n"
+        "\nЕсли снова FAIL — unit-тесты на ПК, UI через Railway.\n"
     )
     sys.exit(1)
 
