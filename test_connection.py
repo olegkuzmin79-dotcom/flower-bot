@@ -2,10 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
 
-from bot_session import HAPP_SOCKS5, SYSTEM_PROXY, create_bot
+from bot_session import HAPP_SOCKS5, NO_PROXY, SYSTEM_PROXY, create_bot
 from config import BOT_TOKEN, DEV_MODE, TELEGRAM_PROXY
+
+
+def _socks_port_open(host: str = "127.0.0.1", port: int = 10808) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            return True
+    except OSError:
+        return False
 
 
 def _proxy_candidates() -> list[str | None]:
@@ -19,20 +28,22 @@ def _proxy_candidates() -> list[str | None]:
         seen.add(key)
         candidates.append(url)
 
-    # Happ: «Системный прокси» в доп. настройках
-    add(SYSTEM_PROXY)
+    if TELEGRAM_PROXY:
+        add(TELEGRAM_PROXY)
     add(HAPP_SOCKS5)
-    add(TELEGRAM_PROXY)
     for host in ("127.0.0.1", "192.168.1.9"):
         add(f"socks5://{host}:10808")
-    add(None)
+    add(SYSTEM_PROXY)
+    add(NO_PROXY)
     return candidates
 
 
 def _label(proxy: str | None) -> str:
     if proxy == SYSTEM_PROXY:
-        return "системный прокси Windows (Happ)"
-    return proxy or "(без прокси)"
+        return "системный прокси Windows"
+    if proxy == NO_PROXY:
+        return "напрямую (без прокси)"
+    return proxy or "?"
 
 
 async def _try_proxy(proxy: str | None) -> str | None:
@@ -51,7 +62,7 @@ async def _try_proxy(proxy: str | None) -> str | None:
 
 async def main() -> None:
     if not BOT_TOKEN:
-        print("Ошибка: BOT_TOKEN не задан в .env")
+        print("Ошибка: BOT_TOKEN / BOT_TOKEN_DEV не задан в .env")
         sys.exit(1)
 
     try:
@@ -65,29 +76,34 @@ async def main() -> None:
         print("Режим: DEV (токен BOT_TOKEN_DEV)\n")
     else:
         print("Режим: production token (для локалки лучше DEV=1 в .env)\n")
-    print("Happ: VPN подключён + Системный прокси ВКЛ")
-    print(f"Windows прокси -> используем {HAPP_SOCKS5}\n")
+
+    if _socks_port_open():
+        print("Порт SOCKS 127.0.0.1:10808 — открыт (Happ VPN, скорее всего, вкл)\n")
+    else:
+        print(
+            "Порт SOCKS 127.0.0.1:10808 — ЗАКРЫТ.\n"
+            "Включи VPN в Happ. В настройках Happ найди SOCKS5 и порт (часто 10808).\n"
+            "TUN и системный прокси для Cursor лучше держать ВЫКЛ.\n"
+        )
 
     for proxy in _proxy_candidates():
         username = await _try_proxy(proxy)
         if username:
             print(f"\nOK! Bot @{username}")
-            if proxy in (SYSTEM_PROXY, HAPP_SOCKS5):
-                print(f"\nВ .env добавьте и сохраните (Ctrl+S):")
-                print(f"TELEGRAM_PROXY={HAPP_SOCKS5}")
-            elif proxy and proxy != TELEGRAM_PROXY:
+            if proxy and proxy not in (NO_PROXY, SYSTEM_PROXY) and proxy != TELEGRAM_PROXY:
                 print(f"\nВ .env: TELEGRAM_PROXY={proxy}")
-            print("\nЗапускайте: python main.py")
+            print("\nЗапускайте: run_local.bat")
             return
 
     print(
-        "\nFAIL.\n"
-        "Прокси 127.0.0.1:10808 виден, но Telegram API не отвечает.\n"
-        "Попробуйте:\n"
-        "1. Happ: VPN вкл, TUN ВЫКЛ, системный прокси ВЫКЛ\n"
-        "2. В .env: TELEGRAM_PROXY=socks5://127.0.0.1:10808\n"
-        "3. Смените сервер VPN -> python test_connection.py\n"
-        "\nЕсли снова FAIL — unit-тесты на ПК, UI через Railway.\n"
+        "\nFAIL — до Telegram API с этого ПК не достучаться.\n\n"
+        "Это нормально для РФ без рабочего SOCKS.\n\n"
+        "Что работает без VPN:\n"
+        "  run_local.bat  (unit-тесты — у тебя уже OK)\n"
+        "  python test_validation.py\n\n"
+        "Полный бот в Telegram:\n"
+        "  git push -> Railway (прод или dev)\n"
+        "  либо починить Happ: VPN вкл + SOCKS5 порт открыт\n"
     )
     sys.exit(1)
 

@@ -14,7 +14,12 @@ if errorlevel 1 exit /b 1
 echo.
 echo === Telegram connection ===
 "%PY%" test_connection.py
-if errorlevel 1 exit /b 1
+if errorlevel 1 (
+    echo.
+    echo Unit-tests passed. Telegram blocked on this PC — use Railway for UI test.
+    echo To skip this step: set SKIP_CONNECTION=1
+    if not "%SKIP_CONNECTION%"=="1" exit /b 1
+)
 
 echo.
 echo === Dev bot (Ctrl+C to stop) ===
