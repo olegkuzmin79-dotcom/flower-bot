@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from aiogram import Bot, F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
@@ -30,7 +30,7 @@ from keyboards import (
     test_pay_keyboard,
 )
 from payments import create_payment
-from utils import format_taboo_note, normalize_date
+from utils import format_price, format_taboo_note, normalize_date
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -149,6 +149,35 @@ async def list_celebrations(message: Message) -> None:
         taboo = f"\n   ⛔ табу: {item['taboo_tags']}" if item.get("taboo_tags") else ""
         lines.append(f"• {item['recipient_name']} — {item['celebration_date']} ({style}){taboo}")
     await message.answer("\n".join(lines))
+
+
+async def _send_test_reminder(message: Message, bot: Bot) -> None:
+    items = await get_user_celebrations(message.from_user.id)
+    if not items:
+        await message.answer(
+            "Сначала добавь праздник через «➕ Добавить праздник», "
+            "потом нажми «🔔 Тест подборки»."
+        )
+        return
+
+    celebration = {**items[-1], "user_id": message.from_user.id}
+    style_label = STYLE_LABELS.get(celebration["style_preference"], celebration["style_preference"])
+    await message.answer(
+        "🧪 Демо: так выглядит напоминание за 5 дней до праздника.\n"
+        f"Праздник: {celebration['recipient_name']} ({celebration['celebration_date']}), "
+        f"стиль — {style_label}."
+    )
+    await send_reminder(bot, celebration)
+
+
+@router.message(F.text == "🔔 Тест подборки")
+async def test_reminder_button(message: Message, bot: Bot) -> None:
+    await _send_test_reminder(message, bot)
+
+
+@router.message(Command("test_reminder"))
+async def test_reminder_command(message: Message, bot: Bot) -> None:
+    await _send_test_reminder(message, bot)
 
 
 @router.callback_query(F.data.startswith("budget:"))
@@ -302,18 +331,27 @@ async def send_reminder(bot: Bot, celebration: dict) -> None:
 
     style_label = STYLE_LABELS.get(style, style)
     taboo_note = format_taboo_note(taboo)
+    price_lines = "\n".join(
+        f"  {index}. {bouquet.name} — {format_price(bouquet.budget)}"
+        for index, bouquet in enumerate(bouquets, start=1)
+    )
     text = (
         f"🚨 Привет! Через 5 дней день рождения у: {celebration['recipient_name']} "
         f"({celebration['celebration_date']}).\n\n"
         f"Мы помним, что она любит {style_label.lower()} тона{taboo_note}.\n\n"
-        "Шеф-флорист подобрал 3 свежих варианта букетов на эту неделю под твой бюджет. "
-        "Листай фотографии выше и выбирай вариант:"
+        "Шеф-флорист подобрал 3 свежих варианта букетов на эту неделю под твой бюджет.\n"
+        f"Листай фотографии выше 👆\n\n"
+        f"💐 Варианты и цены:\n{price_lines}\n\n"
+        "Выбери бюджет кнопкой ниже:"
     )
 
     try:
         media = [
-            _photo_media(b.image_source(), caption=b.name if i == 0 else None)
-            for i, b in enumerate(bouquets)
+            _photo_media(
+                bouquet.image_source(),
+                caption=bouquet.caption() if index == 0 else None,
+            )
+            for index, bouquet in enumerate(bouquets)
         ]
         await bot.send_media_group(user_id, media=media)
         await bot.send_message(

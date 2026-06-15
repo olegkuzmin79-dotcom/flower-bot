@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from config import ASSETS_DIR, BUDGETS
+from config import ASSETS_DIR, BUDGETS, BUDGET_LABELS
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,7 @@ class Bouquet:
     style: str
     budget: int
     tags: tuple[str, ...]
+    description: str
     image_url: str
 
     def image_source(self) -> str | Path:
@@ -20,6 +21,10 @@ class Bouquet:
         if local.exists():
             return local
         return self.image_url
+
+    def caption(self) -> str:
+        budget_label = BUDGET_LABELS.get(self.budget, "")
+        return f"{self.name}\n{self.description}\n💰 {budget_label} — {self.budget:,} ₽".replace(",", " ")
 
 
 def _build_catalog() -> list[Bouquet]:
@@ -36,6 +41,17 @@ def _build_catalog() -> list[Bouquet]:
         "tender": ("нежный", "пастель"),
         "bright": ("яркий", "экзотика"),
     }
+    description_map = {
+        ("classic", "econom"): "15 красных роз, эвкалипт",
+        ("classic", "business"): "25 роз премиум, зелень, упаковка",
+        ("classic", "premium"): "51 роза, ленты, премиум-упаковка",
+        ("tender", "econom"): "Пионовидные розы, гипсофила",
+        ("tender", "business"): "Розы, эустома, пастельная гамма",
+        ("tender", "premium"): "Пионы, розы, орхидея, шёлковые ленты",
+        ("bright", "econom"): "Герберы, хризантемы, яркая лента",
+        ("bright", "business"): "Экзотический микс, тропические акценты",
+        ("bright", "premium"): "Авторский яркий букет, редкие сорта",
+    }
 
     catalog: list[Bouquet] = []
     bouquet_id = 1
@@ -49,6 +65,7 @@ def _build_catalog() -> list[Bouquet]:
                     style=style,
                     budget=budget,
                     tags=tag_map[style],
+                    description=description_map[(style, budget_key)],
                     image_url=f"https://picsum.photos/seed/flower-{bouquet_id}/800/600",
                 )
             )

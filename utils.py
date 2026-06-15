@@ -42,6 +42,10 @@ def days_until(dd_mm: str, reference: date | None = None) -> int:
     return (next_occurrence(dd_mm, ref) - ref).days
 
 
+def format_price(amount: int) -> str:
+    return f"{amount:,} ₽".replace(",", " ")
+
+
 def format_taboo_note(taboo_tags: str | None) -> str:
     if not taboo_tags:
         return ""
