@@ -1,118 +1,55 @@
-# Локальная разработка (без деплоя на каждый чих)
+# Локальная разработка
 
-## Логика
+## Реальность (зафиксировано)
 
-| Этап | Где | Когда |
-|------|-----|--------|
-| Unit-тесты | ПК, без сети | После каждой правки логики |
-| Полный бот в Telegram | ПК, **dev-бот** | Кнопки, фото, заказ |
-| Продакшен | Railway | Когда dev-бот ок или прокси на ПК не работает |
+| Среда | Что тестируем |
+|-------|----------------|
+| **ПК** | Только логика: `run_local.bat` |
+| **Railway** | Полный бот в Telegram |
 
-**Один токен = один polling.** Прод на Railway и локальный `main.py` с тем же токеном конфликтуют.
-
----
-
-## 1. Создать dev-бота (один раз)
-
-1. [@BotFather](https://t.me/BotFather) → `/newbot` → имя вроде `flower-bot-dev`
-2. Скопировать токен в локальный `.env` как `BOT_TOKEN_DEV`
-3. Прод-токен на Railway **не трогать**
+С ПК **не работает** доступ к Telegram Bot API (РФ). Happ, SOCKS, TUN — пробовали, не вышло. Telegram Desktop локально тоже не ставится. **Больше VPN не крутим.**
 
 ---
 
-## 2. Настроить `.env` на ПК
+## Ежедневный цикл
 
-Файл: `bot/.env` (не коммитить в GitHub)
-
-```env
-DEV=1
-BOT_TOKEN_DEV=123456:ABC...dev...
-TELEGRAM_PROXY=socks5://127.0.0.1:10808
-FLORIST_CHAT_ID=500975404
-ADMIN_CHAT_ID=500975404
-USE_TEST_PAYMENTS=1
+```
+1. Правки в коде
+2. run_local.bat          ← 10 секунд, без сети
+3. git push               ← Railway пересобирает
+4. Тест в Telegram        ← прод-бот на Railway
 ```
 
-`TELEGRAM_PROXY=socks5://127.0.0.1:10808` — прокси **только для Python-бота**, не для всего ПК.
-
-База локально: `data/bot_dev.db` (отдельно от продакшена).
-
 ---
 
-## VPN и Cursor (важно)
-
-**Не включай TUN и системный прокси** — из‑за этого падает Cursor и весь интернет на ПК.
-
-Правильная схема для Happ:
-
-| Настройка | Значение |
-|-----------|----------|
-| VPN подключён | Да (чтобы порт SOCKS работал) |
-| **TUN** | **Выкл** |
-| **Системный прокси** | **Выкл** |
-| В `.env` бота | `TELEGRAM_PROXY=socks5://127.0.0.1:10808` |
-
-Тогда **только бот** ходит в Telegram через SOCKS, а **Cursor и браузер** — как обычно.
-
-Если SOCKS не поднимается без TUN — полный UI-тест только через Railway; на ПК остаются unit-тесты.
-
----
-
-## 3. Запуск
-
-```powershell
-cd "C:\Oleg\Cursor\Цветочный бизнес\bot"
-pip install -r requirements.txt
-```
-
-**Только логика (без Telegram):**
-
-```powershell
-python test_validation.py
-python test_reminder_flow.py
-```
-
-**Полный бот** (обход блокировки PowerShell):
+## Запуск на ПК
 
 ```cmd
+cd "C:\Oleg\Cursor\Цветочный бизнес\bot"
 run_local.bat
 ```
 
-Или двойной клик по `run_local.bat` в проводнике.
-
-Альтернатива PowerShell (если нужен `.ps1`):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\run_local.ps1
-```
-
-Или вручную:
-
-```powershell
-python test_connection.py
-python main.py
-```
-
-Тестируй в Telegram у **dev-бота**. Railway можно не останавливать — токены разные.
+Или: `python test_validation.py` + `python test_reminder_flow.py`
 
 ---
 
-## 4. Деплой на Railway
+## Railway
 
-Когда dev-бот работает:
-
-1. Правки в коде
-2. `git push` в [flower-bot](https://github.com/olegkuzmin79-dotcom/flower-bot)
-3. Railway пересоберёт сам
-
-На Railway в Variables: **нет** `DEV`, **нет** `BOT_TOKEN_DEV` — только прод `BOT_TOKEN`.
+- Репозиторий: https://github.com/olegkuzmin79-dotcom/flower-bot
+- Variables: `BOT_TOKEN` (прод), **без** `DEV`
+- После `git push` подожди 1–3 мин → тест в боте
 
 ---
 
-## Если `test_connection.py` падает
+## Файлы
 
-Прокси на ПК не достаёт до `api.telegram.org`:
+| Файл | Назначение |
+|------|------------|
+| `bot/.env` | Локально, не в Git. `DEV`/`BOT_TOKEN_DEV` — опционально, для ПК не нужны |
+| `test_connection.py` | Справочный скрипт, **не обязателен** |
 
-- сменить сервер VPN;
-- Happ: VPN вкл, **TUN выкл**, **системный прокси выкл**, в `.env` только `TELEGRAM_PROXY`;
-- тогда тестировать через Railway (деплой), unit-тесты — всё равно на ПК.
+---
+
+## Dev-бот @flower_dev_bot
+
+Токен в локальном `.env` можно оставить. Запускать его имеет смысл **только на сервере** (отдельный Railway-сервис), если понадобится тест без прода. Сейчас достаточно прод-бота + unit-тестов.
