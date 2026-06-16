@@ -1,0 +1,26 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Заказ #{{ order.order_id }}{% endblock %}
+{% block content %}
+<h1>Заказ #{{ order.order_id }}</h1>
+<div class="card">
+  <p><strong>Заказчик:</strong> {{ order.customer_name or (user.customer_name if user else '—') }}</p>
+  <p><strong>Телефон заказчика:</strong> {{ user.phone if user and user.phone else '—' }}</p>
+  <p><strong>Имя получателя:</strong> {{ celebration.recipient_fio or celebration.recipient_name if celebration else '—' }}</p>
+  <p><strong>Телефон получателя:</strong> {{ order.recipient_contact_phone or '—' }}</p>
+  <p><strong>Праздник:</strong> {{ celebration.celebration_date if celebration else '—' }}</p>
+  <p><strong>Бюджет:</strong> {{ budget_labels.get(order.budget_selected, order.budget_selected) }} ₽</p>
+  <p><strong>Адрес:</strong> {{ order.delivery_address or '—' }}</p>
+  <p><strong>Интервал:</strong> {{ order.delivery_time or '—' }}</p>
+  <p><strong>Комментарий:</strong> {{ order.delivery_comment or '—' }}</p>
+</div>
+<form method="post" class="card">
+  <label>Оплата</label>
+  <select name="payment_status">
+    {% for key, label in payment_statuses %}
+      <option value="{{ key }}" {% if order.payment_status == key %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Сохранить</button>
+</form>
+<p><a href="{{ url_for('admin_orders') }}">← К списку</a></p>
+{% endblock %}

@@ -33,6 +33,7 @@ from choices import (
     referral_friend_joined_text,
     referral_invite_text,
 )
+from backup import run_backup
 from bouquets import build_reminder_display
 from config import ADMIN_CHAT_ID, BUDGETS, BUDGET_LABELS
 from database import (
@@ -671,6 +672,18 @@ async def test_reminder_button(message: Message, bot: Bot) -> None:
 @router.message(Command("test_reminder"))
 async def test_reminder_command(message: Message, bot: Bot) -> None:
     await _send_test_reminder(message, bot)
+
+
+@router.message(Command("backup"))
+async def backup_command(message: Message, bot: Bot) -> None:
+    if not ADMIN_CHAT_ID or str(message.from_user.id) != str(ADMIN_CHAT_ID):
+        return
+    await message.answer("Делаю бэкап базы и CSV…")
+    path = await run_backup(bot, reason="manual")
+    if path:
+        await message.answer(f"Готово: {path.name} отправлен в этот чат.")
+    else:
+        await message.answer("Бэкап не удался — смотри логи Railway.")
 
 
 @router.callback_query(F.data.startswith("budget:"))

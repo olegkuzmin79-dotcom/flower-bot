@@ -8,10 +8,11 @@ from aiogram.exceptions import TelegramNetworkError
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot_session import create_bot
-from config import BOT_TOKEN, DEV_MODE
+from config import BOT_TOKEN, DATABASE_PATH, DEV_MODE, WEB_PORT
 from database import init_db
 from handlers import router
 from scheduler import setup_scheduler
+from admin_web import start_admin_server
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +42,9 @@ async def main() -> None:
         logger.info("Production mode (set DEV=1 in .env for local development)")
 
     await init_db()
+
+    start_admin_server(WEB_PORT)
+    logger.info("Admin web on port %s (path /admin)", WEB_PORT)
 
     bot = create_bot()
     dp = Dispatcher(storage=MemoryStorage())

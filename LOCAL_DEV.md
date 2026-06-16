@@ -37,6 +37,8 @@ run_local.bat
 
 - Репозиторий: https://github.com/olegkuzmin79-dotcom/flower-bot
 - Variables: `BOT_TOKEN` (прод), **без** `DEV`
+- **Данные не должны пропадать:** см. `PERSISTENCE.md` (volume `/app/data` + бэкапы в Telegram)
+- **Админка:** `https://<railway-url>/admin` — пароль `WEB_ADMIN_PASSWORD`
 - После `git push` подожди 1–3 мин → тест в боте
 
 ---

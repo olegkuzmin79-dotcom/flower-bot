@@ -14,6 +14,7 @@ from database import (
     mark_celebration_reminder_year,
 )
 from handlers import send_payment_nudge, send_reminder
+from backup import run_backup
 from utils import days_until, msk_today, next_occurrence
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,13 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         CronTrigger(hour=9, minute=0, timezone=MSK_TZ),
         args=[bot],
         id="daily_reminders",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_backup,
+        CronTrigger(hour=4, minute=0, timezone=MSK_TZ),
+        args=[bot, "daily"],
+        id="daily_backup",
         replace_existing=True,
     )
     return scheduler

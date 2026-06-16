@@ -1,0 +1,32 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Дашборд{% endblock %}
+{% block content %}
+<h1>Дашборд</h1>
+<p class="hint">База: <code>{{ database_path }}</code></p>
+<div class="stats card">
+  <div class="stat"><b>{{ stats.clients }}</b>клиентов</div>
+  <div class="stat"><b>{{ stats.celebrations }}</b>праздников</div>
+  <div class="stat"><b>{{ stats.orders }}</b>заказов</div>
+  <div class="stat"><b>{{ stats.paid }}</b>оплачено</div>
+  <div class="stat"><b>{{ stats.pending }}</b>ожидают</div>
+</div>
+<div class="actions">
+  <a class="btn secondary" href="{{ url_for('admin_export_csv', table='clients') }}">CSV клиенты</a>
+  <a class="btn secondary" href="{{ url_for('admin_export_csv', table='celebrations') }}">CSV праздники</a>
+  <a class="btn secondary" href="{{ url_for('admin_export_csv', table='orders') }}">CSV заказы</a>
+</div>
+<p class="hint">CSV можно загрузить в Google Sheets: Файл → Импорт.</p>
+<h2>Последние заказы</h2>
+<table>
+  <tr><th>#</th><th>Заказчик</th><th>Получатель</th><th>₽</th><th>Оплата</th></tr>
+  {% for o in orders %}
+  <tr>
+    <td><a href="{{ url_for('admin_order_detail', order_id=o.order_id) }}">{{ o.order_id }}</a></td>
+    <td>{{ o.customer_name or '—' }}</td>
+    <td>{{ o.recipient_name }}</td>
+    <td>{{ o.budget_selected }}</td>
+    <td>{{ payment_labels.get(o.payment_status, o.payment_status) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

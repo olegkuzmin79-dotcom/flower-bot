@@ -1,0 +1,20 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Клиенты{% endblock %}
+{% block content %}
+<h1>Клиенты</h1>
+<table>
+  <tr><th>ID</th><th>Username</th><th>Имя</th><th>Телефон</th><th>Праздники</th><th>Заказы</th><th>Скидка</th><th>Создан</th></tr>
+  {% for c in clients %}
+  <tr>
+    <td>{{ c.user_id }}</td>
+    <td>{{ c.username or '—' }}</td>
+    <td>{{ c.customer_name or '—' }}</td>
+    <td>{{ c.phone or '—' }}</td>
+    <td>{{ c.celebrations_count }}</td>
+    <td>{{ c.orders_count }}</td>
+    <td>{{ c.referral_credit_rub or 0 }} ₽</td>
+    <td>{{ c.created_at }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

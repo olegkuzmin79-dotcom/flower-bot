@@ -1,0 +1,18 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Праздники{% endblock %}
+{% block content %}
+<h1>Праздники</h1>
+<table>
+  <tr><th>ID</th><th>Клиент</th><th>Получатель</th><th>Дата</th><th>Эффект</th><th>Ограничения</th></tr>
+  {% for item in items %}
+  <tr>
+    <td>{{ item.id }}</td>
+    <td>{{ item.customer_name or item.phone or item.user_id }}</td>
+    <td>{{ item.recipient_name }}</td>
+    <td>{{ item.celebration_date }}</td>
+    <td>{{ item.style_label }}</td>
+    <td>{{ item.taboo_label or '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

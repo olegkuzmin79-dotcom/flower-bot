@@ -1,0 +1,23 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Заказы{% endblock %}
+{% block content %}
+<h1>Заказы</h1>
+<table>
+  <tr>
+    <th>#</th><th>Заказчик</th><th>Тел. заказчика</th><th>Получатель</th><th>Тел. получателя</th>
+    <th>Бюджет</th><th>Оплата</th><th>Адрес</th>
+  </tr>
+  {% for o in orders %}
+  <tr>
+    <td><a href="{{ url_for('admin_order_detail', order_id=o.order_id) }}">{{ o.order_id }}</a></td>
+    <td>{{ o.customer_name or '—' }}</td>
+    <td>{{ o.phone or '—' }}</td>
+    <td>{{ o.recipient_name }}</td>
+    <td>{{ o.recipient_contact_phone or '—' }}</td>
+    <td>{{ budget_labels.get(o.budget_selected, o.budget_selected) }}</td>
+    <td>{{ payment_labels.get(o.payment_status, o.payment_status) }}</td>
+    <td>{{ o.delivery_address or '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
